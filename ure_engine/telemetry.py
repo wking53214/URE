@@ -1,5 +1,5 @@
 """
-telemetry.py — projecting raw signals onto the pressure state space.
+telemetry.py, projecting raw signals onto the pressure state space.
 ====================================================================
 
 This is the only place in URE that knows what a "queue" or a "circuit breaker"

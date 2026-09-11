@@ -1,5 +1,5 @@
 """
-vaccines.py — BVE, the Behavioral Vaccine Engine.
+vaccines.py, BVE, the Behavioral Vaccine Engine.
 =================================================
 
 AMX remembers *what* attacked. BVE learns the *shape* of the attack, so the

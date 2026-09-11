@@ -1,5 +1,5 @@
 """
-URE — the Universal Resilience Engine.
+URE, the Universal Resilience Engine.
 ======================================
 
 URE is the resilience subsystem of the AEGIS architecture. It sits behind a

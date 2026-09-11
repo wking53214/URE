@@ -1,5 +1,5 @@
 """
-assessment.py — the canonical URE output contract.
+assessment.py, the canonical URE output contract.
 ==================================================
 
 The archive is explicit about why this type exists: it was added "to prevent

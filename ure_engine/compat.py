@@ -1,5 +1,5 @@
 """
-compat.py — the legacy GSA interface, satisfied exactly.
+compat.py, the legacy GSA interface, satisfied exactly.
 ========================================================
 
 This module closes the gap the whole project began with. GSA's gateway

@@ -1,5 +1,5 @@
 """
-engine.py — the URE orchestrator.
+engine.py, the URE orchestrator.
 =================================
 
 Wires the subsystems into the execution flow the architecture specifies::

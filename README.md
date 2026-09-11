@@ -1,4 +1,4 @@
-# URE — Universal Resilience Engine
+# URE: Universal Resilience Engine
 
 **SYS-URE-001 · v2.0 Reference Implementation · the resilience subsystem of AEGIS**
 
@@ -12,7 +12,7 @@ A risk scorer asks *how dangerous is this request?* URE asks:
 > absorb, and what should be done about it?
 
 It computes **stability, trajectory, regime, resilience, recovery and
-adaptation** — not a risk score.
+adaptation**: not a risk score.
 
 ```
 278 tests · 0 runtime dependencies · Python 3.11+
@@ -23,7 +23,7 @@ adaptation** — not a risk score.
 ## Why this repository exists
 
 The GSA (Governed Secure AI Gateway) archive contained a gateway, a policy
-seam, an attestation service, an audit ledger — and this line:
+seam, an attestation service, an audit ledger, and this line:
 
 ```python
 from ure_engine import ClassificationResult, GatewayHealthEngine
@@ -40,6 +40,10 @@ archive put it plainly:
 This is that subsystem. The legacy import above works, unchanged, against the
 full v2 engine. See [`docs/PROVENANCE.md`](docs/PROVENANCE.md) for where every
 component came from.
+
+URE had been dead for four months and had never possessed a repository at any
+point in its life. It was reconstructed from 863 archived design conversations.
+[`RECONSTRUCTION.md`](RECONSTRUCTION.md) records how, and what that took.
 
 ---
 
@@ -86,9 +90,9 @@ earns its own complexity:
 
 | Scenario | Energy | Regime | Recommendation |
 |---|---|---|---|
-| Legitimate traffic surge | 0.96 | `STRESSED` | `THROTTLE` — shed load |
-| Probing campaign | 1.16 | `ATTACKED` | `ISOLATE` — narrow *who* is served, do not throttle |
-| Attack inducing failures | 1.46 | `CASCADING` | `QUARANTINE` — stop admission, preserve evidence |
+| Legitimate traffic surge | 0.96 | `STRESSED` | `THROTTLE` (shed load) |
+| Probing campaign | 1.16 | `ATTACKED` | `ISOLATE` (narrow *who* is served, do not throttle) |
+| Attack inducing failures | 1.46 | `CASCADING` | `QUARANTINE` (stop admission, preserve evidence) |
 
 Comparable energy. Different answers. That is the whole point.
 
@@ -126,7 +130,7 @@ UREAssessment
 
 **AMX and BVE run before classification, not after.** Their output raises
 `adversarial_pressure`, which changes the energy the classifier sees. Running
-them afterwards would let memory annotate an assessment but never alter one —
+them afterwards would let memory annotate an assessment but never alter one,
 which is precisely how they became dead code in the predecessor build. Here
 they are upstream of the decision, or they are not shipped.
 
@@ -139,16 +143,16 @@ Full design: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 Everything URE reasons about is projected onto six normalized `[0, 1]`
 dimensions. That projection is the only thing the engine consumes, which is
 what lets the same engine sit behind an LLM gateway, a payments API, or a
-control link — swap the adapter, keep the engine.
+control link, swap the adapter, keep the engine.
 
 | Pressure | Meaning |
 |---|---|
-| `threat_pressure` | Hostile intent observed **now** — policy scores, block rates |
-| `latency_pressure` | Time-domain strain — absolute latency plus its volatility |
-| `failure_pressure` | Things breaking — retries, open circuits, errors |
+| `threat_pressure` | Hostile intent observed **now**: policy scores, block rates |
+| `latency_pressure` | Time-domain strain, absolute latency plus its volatility |
+| `failure_pressure` | Things breaking, retries, open circuits, errors |
 | `drift_pressure` | Divergence from the expected operating distribution |
-| `adversarial_pressure` | Hostile capability accumulated **over time** — AMX/BVE memory |
-| `resource_pressure` | Substrate exhaustion — queue saturation, degraded health |
+| `adversarial_pressure` | Hostile capability accumulated **over time**: AMX/BVE memory |
+| `resource_pressure` | Substrate exhaustion, queue saturation, degraded health |
 
 `threat` and `adversarial` are separate on purpose: one nasty request is
 threat; a recognized recurring campaign is adversarial. The energy function
@@ -162,11 +166,11 @@ weights the second more heavily.
 |---|---|---|
 | `NOMINAL` | Low energy, quiet trajectory | none |
 | `ADAPTING` | Mid-band, in motion, absorbing it | none |
-| `RECOVERING` | Energy dissipating | `RESTORE` — do not intervene |
+| `RECOVERING` | Energy dissipating | `RESTORE` (do not intervene) |
 | `STRESSED` | Load, not malice | `THROTTLE` / `DEGRADE` |
 | `ATTACKED` | Threat or adversarial pressure dominates | `ISOLATE` |
 | `CASCADING` | Failures inducing failures | `QUARANTINE` |
-| `UNKNOWN` | Could not classify — treated as a **fault** | `DEGRADE` + page |
+| `UNKNOWN` | Could not classify, treated as a **fault** | `DEGRADE` + page |
 
 `UNKNOWN` ranks above `STRESSED` in severity. An engine that cannot classify
 its own state is not in a mild condition.
@@ -180,7 +184,7 @@ they cannot return.
 
 **1. Energy was never zero.** The original computed `V(x) = 1.5 · sigmoid(Σp²)`.
 Since `sigmoid(0) = 0.5`, an idle system with zero pressure scored **0.75**
-energy — above the `NOMINAL` band. `NOMINAL` and `RECOVERING` were
+energy, above the `NOMINAL` band. `NOMINAL` and `RECOVERING` were
 *mathematically unreachable* and a healthy idle gateway reported as stressed
 forever. Now `V(x) = 1.5 · tanh(Σp²/2)`: exactly 0 at rest, same saturation.
 Guarded by `test_zero_state_has_exactly_zero_energy` and a full state-space
@@ -188,19 +192,19 @@ reachability sweep.
 
 **2. Rejections were under-weighted.** A sustained 60% policy rejection rate
 never moved the regime off `NOMINAL`, because `reject_rate` fed only the
-0.3-weighted block-rate term. It now drives threat pressure directly — from a
+0.3-weighted block-rate term. It now drives threat pressure directly, because from a
 gateway's point of view a surge of rejections *is* the threat signal. Guarded
 by `test_sustained_sixty_percent_rejection_is_not_nominal`.
 
 **3. AMX, BVE and the recovery planner were dead.** They were instantiated and
-never called. The predecessor deleted them, correctly — a dead subsystem is
+never called. The predecessor deleted them, correctly: a dead subsystem is
 worse than an absent one. They are restored here **wired**: AMX and BVE feed
 `adversarial_pressure` upstream of classification, and the recovery planner's
 output gates the engine's own learning. Guarded by `TestMemoryIsActuallyWired`.
 
 Two further defects were found by the tests written for this build:
 
-**4. NaN energy reported `NOMINAL`.** `clamp()` maps NaN to its floor — right
+**4. NaN energy reported `NOMINAL`.** `clamp()` maps NaN to its floor: right
 for a pressure, catastrophic for energy, because a broken computation
 normalized to 0.0 and the engine confidently reported health. Non-finite
 inputs now return `UNKNOWN`.
@@ -231,8 +235,8 @@ summary.regime_confidence
 summary.rationale_statement
 ```
 
-The full v2 pipeline runs underneath — trajectory analysis, AMX, BVE, adaptive
-thresholds — the legacy interface simply cannot *see* it. When you're ready to
+The full v2 pipeline runs underneath, trajectory analysis, AMX, BVE, adaptive
+thresholds, the legacy interface simply cannot *see* it. When you're ready to
 migrate, `summary.assessment` is the modern `UREAssessment`, and
 `health.engine` is the `UREEngine` itself.
 
@@ -246,7 +250,7 @@ to be lost.
 
 URE never knows a policy's type, implementation, domain, rules, or internals.
 It consumes gateway telemetry and opaque signatures. Policy outcomes reach it
-only through `PolicyTelemetry` — a score, a verdict shape, and a hash:
+only through `PolicyTelemetry`: a score, a verdict shape, and a hash:
 
 ```python
 engine.observe_policy_signal(PolicyTelemetry(
@@ -260,7 +264,7 @@ engine.observe_policy_signal(PolicyTelemetry(
 ))
 ```
 
-This invariant is enforced mechanically — `test_ure_does_not_import_policy_modules`
+This invariant is enforced mechanically, `test_ure_does_not_import_policy_modules`
 fails if anything in the package ever imports a policy module.
 
 And absolute rules stay absolute: a policy `hard_block` bypasses the adaptive
@@ -285,7 +289,7 @@ component whose entire job is to keep working when other things break.
 
 ## Design notes worth knowing
 
-**Resilience grows with experience.** A cold engine scores ~0.74, not 1.00 — it
+**Resilience grows with experience.** A cold engine scores ~0.74, not 1.00, because it
 has no vaccines and no memory, and a system that has never met an adversary is
 genuinely less resilient than one that recognizes them. The index climbs as BVE
 acquires vaccines and AMX builds memory.
@@ -296,8 +300,8 @@ can isolate a system on the strength of its own misclassification with nothing
 in the loop to disagree.
 
 **Learning stays on under attack.** That is when the most valuable adversarial
-signal exists. Poisoning is defended against inside BVE — by the discrimination
-threshold at synthesis and the effectiveness feedback loop — not by going
+signal exists. Poisoning is defended against inside BVE, by the discrimination
+threshold at synthesis and the effectiveness feedback loop, not by going
 blind. Learning stops only during `CASCADING`, where an engine would otherwise
 learn its own collapse.
 
@@ -307,6 +311,16 @@ the engine from accumulating superstitions.
 
 ---
 
+## Documents
+
+| | |
+|---|---|
+| [`RECONSTRUCTION.md`](RECONSTRUCTION.md) | How this repository was rebuilt, and why it was possible |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | The full design, decision by decision |
+| [`docs/PROVENANCE.md`](docs/PROVENANCE.md) | Source-by-source lineage, with evidence classes |
+
+---
+
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE).
+Apache 2.0, see [LICENSE](LICENSE).

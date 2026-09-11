@@ -1,5 +1,5 @@
 """
-state_vector.py — the six-dimensional pressure state URE reasons over.
+state_vector.py, the six-dimensional pressure state URE reasons over.
 ======================================================================
 
 URE does not reason about requests, policies, or domain rules. It reasons

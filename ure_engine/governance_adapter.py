@@ -1,5 +1,5 @@
 """
-governance_adapter.py — the GSA <-> URE translation layer.
+governance_adapter.py, the GSA <-> URE translation layer.
 ==========================================================
 
 The architecture identifies this module as the one place with a "direct

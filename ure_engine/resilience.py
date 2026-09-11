@@ -1,5 +1,5 @@
 """
-resilience.py — the single executive metric.
+resilience.py, the single executive metric.
 ============================================
 
 One number, 0.0 to 1.0, that a dashboard can show and an executive can read:

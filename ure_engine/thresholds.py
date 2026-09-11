@@ -1,5 +1,5 @@
 """
-thresholds.py — Adaptive Threshold Controller v2.
+thresholds.py, Adaptive Threshold Controller v2.
 =================================================
 
 The gateway blocks a request when its policy score exceeds a threshold. In the

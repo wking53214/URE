@@ -1,5 +1,5 @@
 """
-trajectory.py — velocity, acceleration, and volatility of the state.
+trajectory.py, velocity, acceleration, and volatility of the state.
 ====================================================================
 
 The Lyapunov engine answers "is energy rising?". The trajectory engine answers

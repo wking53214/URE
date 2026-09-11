@@ -1,5 +1,5 @@
 """
-attack_memory.py — AMX, the Attack Memory Exchange.
+attack_memory.py, AMX, the Attack Memory Exchange.
 ===================================================
 
 AMX is what makes URE historically aware. Without it the engine is purely

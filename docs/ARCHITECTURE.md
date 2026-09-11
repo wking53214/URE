@@ -77,7 +77,7 @@ therefore the regime it assigns.
 
 If they ran *after* classification, memory and learning could annotate an
 assessment but never alter one. That is exactly how they became dead code in
-the predecessor build — instantiated, never called, correctly deleted. A
+the predecessor build: instantiated, never called, correctly deleted. A
 subsystem that cannot change an outcome is decoration.
 
 ---
@@ -121,7 +121,7 @@ Properties, all asserted by tests:
 - **`V(0) = 0` exactly.** See §8.
 - **Monotone** in every dimension.
 - **Bounded** by `ENERGY_MAX = 1.5`, approached but never reached.
-- **Convex** — squaring means one severe pressure outweighs several moderate
+- **Convex**: squaring means one severe pressure outweighs several moderate
   ones of the same total. That bias is what makes the engine notice
   concentrated attacks rather than averaging them into background load.
 
@@ -139,8 +139,8 @@ float64. `test_uses_epoch_scale_timestamps_without_precision_loss` guards it.
 ### Early warning
 
 `time_to_threshold()` projects forward at the current slope, turning "energy is
-rising" into "about 40 seconds of headroom" — the form a recovery planner can
-act on.
+rising" into "about 40 seconds of headroom", which is the form a recovery
+planner can act on.
 
 ---
 
@@ -161,7 +161,7 @@ twice in two code paths that could disagree.
 **Why oscillation matters.** A system flapping between 0.55 and 0.75 energy has
 a mean slope of roughly zero. Any derivative-only check calls it stable, while
 an operator watching the graph would immediately call it unhealthy. Flat steps
-are skipped when counting reversals — otherwise an idle system producing
+are skipped when counting reversals; otherwise an idle system producing
 identical energies registers a reversal on every sample and reads as violently
 unstable.
 
@@ -170,7 +170,7 @@ unstable.
 ## 6. Regime classification
 
 The architecture is explicit that classification should use "Lyapunov energy,
-Lyapunov derivative, historical memory, and trajectory features — **not static
+Lyapunov derivative, historical memory, and trajectory features, **not static
 thresholds**". The predecessor's cascade of `if energy >= 0.60` branches was a
 stopgap: correct at its calibration points, arbitrary between them, and
 impossible to explain to an operator standing at a boundary.
@@ -192,12 +192,12 @@ resource)`.
 
 This buys three things the cascade could not:
 
-1. **Confidence** — the winner's share of probability mass, so a 0.34/0.33/0.33
+1. **Confidence**: the winner's share of probability mass, so a 0.34/0.33/0.33
    split is visibly a coin flip rather than a confident answer.
-2. **Entropy** — a real measure of classifier ambiguity. The legacy GSA
+2. **Entropy**: a real measure of classifier ambiguity. The legacy GSA
    interface already had a field for this that the old engine could only fill
    with a hand-wave.
-3. **Explanation** — the runner-up and the margin, which is what an operator
+3. **Explanation**: the runner-up and the margin, which is what an operator
    actually wants at a boundary.
 
 ### Two deliberate asymmetries
@@ -210,8 +210,8 @@ match on a quiet system does not invent an attack.
 **CASCADING is *gated*, not weighted.** Below 0.65 normalized energy
 (≈ 0.98 absolute, matching the predecessor's calibrated `energy >= 1.0` band)
 it carries **zero** evidence. A steep legitimate load ramp looks identical to a
-cascade in every other respect — rising energy, high failure and resource
-pressure — and calling it CASCADING quarantines a system that is only busy.
+cascade in every other respect, rising energy, high failure and resource
+pressure, and calling it CASCADING quarantines a system that is only busy.
 Requiring genuine proximity to collapse is what separates the two. This was
 caught by running `examples/incident_walkthrough.py` and watching a traffic
 surge get quarantined.
@@ -235,7 +235,7 @@ is fine".
 
 ## 7. Memory and learning
 
-### AMX — Attack Memory Exchange
+### AMX, Attack Memory Exchange
 
 Signature → `AttackProfile(severity, frequency, success_rate, last_seen,
 first_seen, tags)`.
@@ -245,7 +245,7 @@ first_seen, tags)`.
 - **Exponential decay**, 6-hour half-life. Pausing to evade a memory window is
   the obvious counter-move; a half-life makes it expensive without making
   memory permanent.
-- **Probabilistic union** for aggregate pressure — `1 − Π(1 − sᵢ)`, not a sum.
+- **Probabilistic union** for aggregate pressure, `1 − Π(1 − sᵢ)`, not a sum.
   A sum saturates at 1.0 after two matches and stops discriminating.
 - **Ambient pressure**: a deployment under sustained attack is in a different
   posture than an idle one regardless of what *this* request looks like.
@@ -254,18 +254,18 @@ first_seen, tags)`.
 - **Exchange**: `export_profiles` / `import_profiles` round-trip so a fleet can
   pool what it has learned. Nothing in a profile is request content.
 
-### BVE — Behavioral Vaccine Engine
+### BVE, Behavioral Vaccine Engine
 
 An ordered marker sequence that repeatedly preceded a bad outcome becomes a
-vaccine. On a later encounter, a *partial* match fires — acting at marker two
+vaccine. On a later encounter, a *partial* match fires, acting at marker two
 of three instead of after marker three. That is the entire value.
 
 Three properties separate this from a blocklist:
 
-- **Acquired** — synthesized from observed incidents, never authored.
-- **Graded** — confidence × effectiveness, with partial matches conferring
+- **Acquired**: synthesized from observed incidents, never authored.
+- **Graded**: confidence × effectiveness, with partial matches conferring
   partial protection.
-- **Waning** — vaccines whose predictions stop coming true lose effectiveness
+- **Waning**: vaccines whose predictions stop coming true lose effectiveness
   and are retired. This is what keeps the engine from accumulating
   superstitions.
 
@@ -280,7 +280,7 @@ zero out a vaccine and one early success does not certify one.
 
 ### When learning stops
 
-Learning stays **on** under `ATTACKED` — that is when the most valuable
+Learning stays **on** under `ATTACKED`: that is when the most valuable
 adversarial signal exists, and an engine that stops recording exactly when it
 is attacked can never become historically aware. Poisoning is defended against
 inside BVE (the discrimination threshold and the effectiveness loop), not by
@@ -304,7 +304,7 @@ One number, `0.00` collapsed → `1.00` highly resilient.
 | memory | 0.10 | AMX depth **minus** active recall |
 
 This is **not** an inverted risk score. Risk asks "how bad is it now".
-Resilience asks "how much can this absorb before it stops working" — a question
+Resilience asks "how much can this absorb before it stops working", which is a question
 about capacity, which depends on trajectory, learning, and how much capability
 has already been spent staying upright.
 
@@ -320,7 +320,7 @@ Three consequences worth stating plainly:
   matter how the terms average out. A metric that looks reassuring during an
   outage is worse than no metric.
 
-The full `ResilienceBreakdown` is always reported, including `weakest_term` —
+The full `ResilienceBreakdown` is always reported, including `weakest_term`,
 computed by weighted contribution, so it points at where the leverage is. A
 single number nobody can decompose is a number nobody trusts.
 
@@ -338,7 +338,7 @@ RESTORE     walk back toward normal
 
 **The asymmetry that justifies the regime model: STRESSED throttles, ATTACKED
 isolates.** Throttling an overloaded system relieves it. Throttling an attacked
-system does the attacker's work — they wanted the service degraded, and the
+system does the attacker's work: they wanted the service degraded, and the
 defence delivered it. Under attack the correct move is to narrow *who* is
 served, not *how much* service exists. `reduce_rate_limit` is explicitly
 `False` in the ATTACKED vector.
@@ -353,12 +353,12 @@ and an oscillating loop is worse than either fixed state.
 Two implementation details that are easy to get wrong, and were:
 
 - The planner records what conditions **proposed**, not what was **applied**.
-  Recording held actions makes the history self-reinforcing — every hold
+  Recording held actions makes the history self-reinforcing, every hold
   re-asserts the elevated action as evidence for continuing to hold, and the
   system can never leave QUARANTINE.
 - A held vector carries the **applied** action's controls, not the proposed
   action's. Otherwise an executor receives a vector whose action says
-  QUARANTINE and whose controls say resume admission — and it will obey the
+  QUARANTINE and whose controls say resume admission, and it will obey the
   controls.
 
 ### URE recommends; it does not act
@@ -375,7 +375,7 @@ in the loop to disagree.
 threshold = f(regime, stability, attack_pressure, recovery_state)
 ```
 
-Regime anchors — the first, fifth and sixth are specified by the architecture:
+Regime anchors, the first, fifth and sixth are specified by the architecture:
 
 | Regime | Anchor |
 |---|---|
@@ -390,7 +390,7 @@ Regime anchors — the first, fifth and sixth are specified by the architecture:
 The ladder falls faster than linearly because the cost of a false negative
 grows much faster than the cost of a false positive once a system is in
 trouble. Adjustments: low resilience tightens, attack pressure tightens,
-recovery relaxes slightly but never above the anchor — relaxing during recovery
+recovery relaxes slightly but never above the anchor, relaxing during recovery
 is what causes the second spike.
 
 False-discovery-rate feedback is preserved from GSA as a **bounded additive
@@ -417,11 +417,11 @@ coupling is concentrated there rather than spread across the engine.
 
 ### Decision precedence
 
-1. **Policy hard-block** — absolute rules stay absolute. No system state makes
+1. **Policy hard-block**: absolute rules stay absolute. No system state makes
    a raw SSN acceptable, and no resilience reading relaxes it.
-2. **System recovery posture** — QUARANTINE/ISOLATE governs regardless of this
+2. **System recovery posture**: QUARANTINE/ISOLATE governs regardless of this
    request's score. The system is not in a position to serve it.
-3. **Adaptive threshold** — otherwise compare the score against the threshold
+3. **Adaptive threshold**: otherwise compare the score against the threshold
    computed for the current regime.
 
 ---
@@ -433,13 +433,13 @@ history so concurrent observers cannot interleave into a torn trajectory. AMX
 and BVE are independently locked.
 
 **Async.** `evaluate()` satisfies the awaitable `GatewayHealthEngine` protocol
-without spawning tasks — there is no I/O to await. It exists so callers on an
+without spawning tasks, there is no I/O to await. It exists so callers on an
 event loop are not forced into a thread.
 
 **Failure behaviour.** Partial telemetry degrades to a partial picture. `None`,
 strings and NaN coerce to safe defaults. A system that is on fire does not owe
 the resilience engine a complete feed. Non-finite *energy*, however, returns
-UNKNOWN rather than a default — see §6.
+UNKNOWN rather than a default, see §6.
 
 **Cost.** Bounded windows (64 samples), no I/O, no allocation proportional to
 traffic. AMX is capacity-bounded with weakest-first eviction; BVE likewise by

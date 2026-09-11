@@ -1,5 +1,5 @@
 """
-recovery.py — turning a diagnosis into a plan.
+recovery.py, turning a diagnosis into a plan.
 ==============================================
 
 URE detects instability; FORTRESS decides recovery strategy. This module is the

@@ -2,7 +2,7 @@
 
 URE existed in concept across an extended design effort before it existed as
 code. This document records where each part of it came from, what was
-recovered verbatim, what was corrected, and what is new — so the lineage is
+recovered verbatim, what was corrected, and what is new, so the lineage is
 auditable rather than asserted.
 
 **Status of this repository:** a reconstruction. The design is recovered from
@@ -20,10 +20,10 @@ repositories, reachable by the identifiers below.
 
 | # | Source | Identifier | Contribution |
 |---|---|---|---|
-| S1 | `wking53214/ChatGPT_History` | `transcripts/6a35c605-ca08-83ea-b911-b8119f947c15.md` — *"GSA URE Architecture Continuation"*, 2026-06-19 | **The authoritative specification.** Continuation prompt for the GSA → URE evolution project: AEGIS hierarchy, design objective, all eight core components, integration contracts, the `UREAssessment` canonical contract, the target module layout, execution flow. |
-| S2 | `wking53214/ChatGPT_History` | `transcripts/6a35c4a6-92d0-83ea-bd81-9d52aa36f1c4.md` — *"GSA.zip Analysis Request"*, 2026-06-19 | Attack Memory, Behavioral Vaccine Engine, Adaptive Threshold Controller v2 with its three calibration anchors, the Recovery Engine action ladder, the `RecoveryVector` example. |
-| S3 | `wking53214/ChatGPT_History` | `transcripts/6a5e3542-be20-83ea-b6c0-992c086bc48e.md` — *"Module Architecture Recommendation"*, 2026-07-20 | **The hardened `ure_engine.py`** (297 lines, recovered verbatim) and the `ure_compat.py` shim. Contains the energy-recentering fix and its rationale. |
-| S4 | `wking53214/ChatGPT_History` | `transcripts/6a679bd9-8ec0-83ea-bcf1-59e1fc6e6669.md` — *"Sentinel OS for Drones"*, 2026-07-29 | The **UGPIS-Ω v1 engine**: `SystemResilienceConfig`, `OperationalRegime`, `SystemMetricsTelemetry`, `IntegratedResilienceOrchestrator`. The predecessor URE. |
+| S1 | `wking53214/ChatGPT_History` | `transcripts/6a35c605-ca08-83ea-b911-b8119f947c15.md`: *"GSA URE Architecture Continuation"*, 2026-06-19 | **The authoritative specification.** Continuation prompt for the GSA → URE evolution project: AEGIS hierarchy, design objective, all eight core components, integration contracts, the `UREAssessment` canonical contract, the target module layout, execution flow. |
+| S2 | `wking53214/ChatGPT_History` | `transcripts/6a35c4a6-92d0-83ea-bd81-9d52aa36f1c4.md`: *"GSA.zip Analysis Request"*, 2026-06-19 | Attack Memory, Behavioral Vaccine Engine, Adaptive Threshold Controller v2 with its three calibration anchors, the Recovery Engine action ladder, the `RecoveryVector` example. |
+| S3 | `wking53214/ChatGPT_History` | `transcripts/6a5e3542-be20-83ea-b6c0-992c086bc48e.md`: *"Module Architecture Recommendation"*, 2026-07-20 | **The hardened `ure_engine.py`** (297 lines, recovered verbatim) and the `ure_compat.py` shim. Contains the energy-recentering fix and its rationale. |
+| S4 | `wking53214/ChatGPT_History` | `transcripts/6a679bd9-8ec0-83ea-bcf1-59e1fc6e6669.md`: *"Sentinel OS for Drones"*, 2026-07-29 | The **UGPIS-Ω v1 engine**: `SystemResilienceConfig`, `OperationalRegime`, `SystemMetricsTelemetry`, `IntegratedResilienceOrchestrator`. The predecessor URE. |
 | S5 | `wking53214/ARCHIVE` | `TRANSCRIPT.md`, `README.md`, `artifact_*.json` | Registry entries identifying URE as `SYS-URE-001` / `ARCH-URE-001` and its domain classification. |
 
 Identifiers S1–S5 are used throughout this document.
@@ -79,14 +79,14 @@ resolves unchanged.
 
 ## 4. Recovered verbatim
 
-### 4.1 Architecture and naming — S1
+### 4.1 Architecture and naming, S1
 
 Carried through without alteration:
 
 - The AEGIS hierarchy (GSA · URE · LTE · AMX · BVE · FORTRESS · WS3 · Dashboard).
 - The six-dimensional `StateVector` and its exact field names.
 - The seven-member `SystemRegime` enum and its member names.
-- The `UREAssessment` field list and field order — S1 specifies this explicitly
+- The `UREAssessment` field list and field order, S1 specifies this explicitly
   "to prevent drift across future implementations", and `assessment.py`
   reproduces it exactly.
 - The `GatewayHealthEngine` protocol signature: `async def evaluate(self, state:
@@ -95,7 +95,7 @@ Carried through without alteration:
   per-module policy-dependency table, reproduced in `ARCHITECTURE.md` §13.
 - The execution flow, reproduced in `ARCHITECTURE.md` §2.
 
-### 4.2 The hardened engine — S3
+### 4.2 The hardened engine, S3
 
 S3 contains a complete, corrected 297-line `ure_engine.py`. Carried forward:
 
@@ -111,7 +111,7 @@ S3 contains a complete, corrected 297-line `ure_engine.py`. Carried forward:
 - The `__main__` reachability sweep, carried forward as
   `test_full_state_space_sweep`.
 
-### 4.3 Component specifications — S1, S2
+### 4.3 Component specifications, S1, S2
 
 `AttackProfile` fields, the AMX capability set (`remember` / `lookup` / `decay`
 / `forget`), `BehavioralVaccine` fields, the `Vaccine-N` naming convention, the
@@ -121,7 +121,7 @@ keys (`reduce_rate_limit`, `disable_learning`, `freeze_vaccines`), the
 resilience index range and its five contributing terms, and the adaptive
 threshold anchors NOMINAL 0.85 / ATTACKED 0.45 / CASCADING 0.20.
 
-### 4.4 The compatibility contract — S3
+### 4.4 The compatibility contract, S3
 
 The exact legacy surface, from the `ure_compat.py` docstring in S3:
 
@@ -139,7 +139,7 @@ must never report calmer than the engine.
 
 ## 5. Defects recovered from the archive, and their fixes
 
-### D1 — Energy had a non-zero floor
+### D1, Energy had a non-zero floor
 
 **Recorded in S3, verbatim:**
 
@@ -147,13 +147,13 @@ must never report calmer than the engine.
 > is 0.75 at zero load, which made NOMINAL and RECOVERING mathematically
 > unreachable.
 
-**Fix (S3, carried forward):** `1.5 · tanh(Σp²/2)` — algebraically the same
+**Fix (S3, carried forward):** `1.5 · tanh(Σp²/2)`: algebraically the same
 sigmoid with its 0.5 baseline removed. Exactly 0 at rest.
 
 **Guarded by:** `test_zero_state_has_exactly_zero_energy`,
 `test_full_state_space_sweep`.
 
-### D2 — Sustained rejections never left NOMINAL
+### D2, Sustained rejections never left NOMINAL
 
 **Recorded in S3, verbatim:**
 
@@ -164,17 +164,17 @@ sigmoid with its 0.5 baseline removed. Exactly 0 at rest.
 directly. From a gateway's point of view a surge of rejections *is* the threat
 signal.
 
-**Guarded by:** `TestTheDefectTheShimExistedToWorkAround` — five tests,
+**Guarded by:** `TestTheDefectTheShimExistedToWorkAround`: five tests,
 including monotonic status escalation across the rejection range.
 
-### D3 — AMX, BVE and the recovery planner were dead code
+### D3, AMX, BVE and the recovery planner were dead code
 
 **Recorded in S3, verbatim:**
 
 > DEAD SUBSYSTEMS REMOVED. AttackMemoryExchange / BehavioralVaccineEngine /
 > RecoveryPlanner were instantiated but never called.
 
-**S3's decision was to delete them**, and that was correct for that build — a
+**S3's decision was to delete them**, and that was correct for that build: a
 dead subsystem is worse than an absent one. But the reason they were never
 called is that nothing fed them: the engine had no signature or marker channel.
 
@@ -183,10 +183,10 @@ called is that nothing fed them: the engine had no signature or marker channel.
 so their output raises `adversarial_pressure` and changes the assessment; the
 recovery vector gates the engine's own learning.
 
-**Guarded by:** `TestMemoryIsActuallyWired` — five tests asserting the
+**Guarded by:** `TestMemoryIsActuallyWired`: five tests asserting the
 subsystems change outcomes, not merely that they exist.
 
-### D4 — Trend computed twice
+### D4, Trend computed twice
 
 **Recorded in S3:** *"Trend is computed once (TrajectoryEngine), not twice."*
 
@@ -202,7 +202,7 @@ These were not in the archive. They were found by writing tests and by running
 the demo, and are recorded here because they are the kind of defect that
 survives review.
 
-### D5 — NaN energy reported NOMINAL
+### D5, NaN energy reported NOMINAL
 
 `clamp()` maps NaN to its floor, which is the right defensive choice for a
 *pressure* and catastrophic for *energy*: a NaN energy normalized to 0.0 and
@@ -213,18 +213,18 @@ Failing visibly beats failing reassuringly.
 
 **Found by:** `test_non_finite_energy_yields_unknown`.
 
-### D6 — Hysteresis could never release
+### D6, Hysteresis could never release
 
 The recovery planner recorded *held* actions into its history, so every hold
 re-asserted the elevated action as evidence for continuing to hold it. A system
-that entered QUARANTINE could never leave — a permanent lockout.
+that entered QUARANTINE could never leave, a permanent lockout.
 
 **Fix:** the planner records what conditions **proposed**, tracked separately
 from what is **applied**.
 
 **Found by:** `test_controls_are_released_once_calm_persists`.
 
-### D7 — Held vectors carried the wrong controls
+### D7, Held vectors carried the wrong controls
 
 A held recommendation carried the *proposed* action's control map. An executor
 would receive `action=QUARANTINE` alongside `controls={...resume admission...}`
@@ -234,11 +234,11 @@ and obey the controls, silently undoing the hold.
 
 **Found by:** inspecting `examples/incident_walkthrough.py` output.
 
-### D8 — A traffic surge was classified as CASCADING
+### D8, A traffic surge was classified as CASCADING
 
 A steep but legitimate load ramp is indistinguishable from a cascade on every
-signal the affinity function used — rising energy, high failure and resource
-pressure — so the demo quarantined a system that was merely busy.
+signal the affinity function used, rising energy, high failure and resource
+pressure, so the demo quarantined a system that was merely busy.
 
 **Fix:** CASCADING is *gated* below 0.65 normalized energy rather than weighted,
 restoring S3's calibrated `energy >= 1.0` band as a hard precondition.

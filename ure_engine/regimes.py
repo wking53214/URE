@@ -1,5 +1,5 @@
 """
-regimes.py — what kind of trouble the system is in.
+regimes.py, what kind of trouble the system is in.
 ===================================================
 
 A regime is a qualitative answer to "what is happening", as distinct from the

@@ -1,5 +1,5 @@
 """
-lyapunov.py — system energy V(x) and its derivative dV/dt.
+lyapunov.py, system energy V(x) and its derivative dV/dt.
 ==========================================================
 
 URE borrows the Lyapunov framing from control theory: define a scalar "energy"
