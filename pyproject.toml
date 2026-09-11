@@ -1,0 +1,77 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ure-engine"
+version = "2.0.0"
+description = "URE, the Universal Resilience Engine: stability, trajectory, regime, resilience, recovery and adaptation for governed systems."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "wking53214" }]
+keywords = [
+    "resilience",
+    "lyapunov",
+    "regime-detection",
+    "ai-governance",
+    "observability",
+    "aegis",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: System :: Monitoring",
+    "Topic :: Security",
+    "Typing :: Typed",
+]
+# No runtime dependencies. URE is pure-stdlib arithmetic over bounded windows
+# so it can be dropped into a gateway's hot path without dragging a dependency
+# tree into a component whose entire job is to keep working when things break.
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4", "mypy>=1.8", "ruff>=0.3"]
+
+[project.urls]
+Homepage = "https://github.com/wking53214/URE"
+Architecture = "https://github.com/wking53214/URE/blob/main/docs/ARCHITECTURE.md"
+Provenance = "https://github.com/wking53214/URE/blob/main/docs/PROVENANCE.md"
+
+[tool.setuptools]
+packages = ["ure_engine"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_configs = true
+disallow_untyped_defs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+strict_equality = true
+files = ["ure_engine"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+ignore = [
+    # Assertions in library code are used here as executable invariants
+    # (e.g. the resilience weights summing to 1.0), which is deliberate.
+    "B011",
+    # `str, Enum` rather than `StrEnum`: these values are read by the legacy
+    # GSA interface and by Prometheus labels, and the mixin keeps them
+    # comparable to plain strings on every supported Python version.
+    "UP042",
+    # `__all__` is grouped by subsystem with section comments, which is more
+    # useful to a reader than alphabetical order.
+    "RUF022",
+]
