@@ -271,15 +271,35 @@ class TestImmunization:
         partial = bve.immunize(ATTACK[:2], now=100.0)
         full = bve.immunize(ATTACK, now=101.0)
         assert full.pressure > partial.pressure
+        # Pinned, not merely ordered: potency is 1.0 here, so a two-of-three
+        # match contributes exactly 2/3 and a full match saturates at 1.0.
+        assert partial.pressure == pytest.approx(2 / 3)
+        assert partial.best_match == pytest.approx(2 / 3)
+        assert full.pressure == pytest.approx(1.0)
 
     def test_interleaved_markers_still_match(self) -> None:
         # Subsequence matching: padding a known sequence with benign markers
         # is still executing the known sequence.
+        #
+        # Every field is pinned, not just `pressure > 0`. A vaccine synthesized
+        # from three adverse observations and no benign ones has confidence and
+        # effectiveness of exactly 1.0, so potency is 1.0 and a full match
+        # saturates pressure at 1.0. "Greater than zero" is therefore true for
+        # almost any perturbation of the constants in immunize(), which is what
+        # mutation analysis proved: it is an assertion that cannot fail.
         bve = BehavioralVaccineEngine(synthesis_threshold=3)
         feed(bve, ATTACK, adverse=True, n=3)
         interleaved = ("hello", "ignore_previous", "weather", "developer_override",
                        "thanks", "show_prompt")
-        assert bve.immunize(interleaved, now=100.0).pressure > 0.0
+
+        result = bve.immunize(interleaved, now=100.0)
+
+        assert result.activated == (bve.vaccines[0].vaccine_id,)
+        # All three pattern markers found in order despite the padding.
+        assert result.best_match == pytest.approx(1.0)
+        # A complete match is not an early warning; preemptive is for partials.
+        assert result.preemptive is False
+        assert result.pressure == pytest.approx(1.0)
 
     def test_out_of_order_markers_do_not_fully_match(self) -> None:
         bve = BehavioralVaccineEngine(synthesis_threshold=3)
@@ -354,11 +374,21 @@ class TestAdaptationScore:
         assert BehavioralVaccineEngine().adaptation_score() == 0.0
 
     def test_learning_raises_the_score(self) -> None:
+        # Pinned to the exact weighted sum. "Greater than zero" passes for any
+        # inflation of the weights, so it proved nothing about the formula --
+        # mutation analysis showed the constants could all shift by +100 and
+        # the assertion still held, because the result merely clamped to 1.0.
         bve = BehavioralVaccineEngine(synthesis_threshold=2)
         for index in range(4):
             markers = (f"a{index}", f"b{index}", f"c{index}")
             feed(bve, markers, adverse=True, n=2, t0=index * 10)
-        assert bve.adaptation_score() > 0.0
+
+        assert len(bve) == 4
+        # Four vaccines, each synthesized from two adverse and zero benign
+        # observations, so confidence and effectiveness are both 1.0 and mean
+        # potency is 1.0. Breadth saturates at eight, so 4/8 == 0.5.
+        #   0.70 * mean_potency + 0.30 * breadth == 0.70 * 1.0 + 0.30 * 0.5
+        assert bve.adaptation_score() == pytest.approx(0.85)
 
     def test_freeze_stops_learning_without_losing_knowledge(self) -> None:
         bve = BehavioralVaccineEngine(synthesis_threshold=3)
