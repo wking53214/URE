@@ -90,7 +90,7 @@ def phases() -> list[tuple[str, dict[str, object]]]:
                     "latency_ms": 40.0,
                     "queue_saturation": 0.1,
                     "signatures": ["probe-7f3a"],
-                    "markers": list(ATTACK_MARKERS),
+                    "markers": ATTACK_MARKERS,
                 },
             )
         )
@@ -111,7 +111,7 @@ def phases() -> list[tuple[str, dict[str, object]]]:
                     "circuit_state": "OPEN" if ramp > 0.4 else "CLOSED",
                     "adversarial_events": 10.0 * ramp,
                     "signatures": ["probe-7f3a"],
-                    "markers": list(ATTACK_MARKERS),
+                    "markers": ATTACK_MARKERS,
                 },
             )
         )

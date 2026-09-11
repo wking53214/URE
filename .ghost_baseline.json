@@ -1,0 +1,194 @@
+[
+  {
+    "attributes": {},
+    "category": "complexity",
+    "confidence": null,
+    "detail": "Line-count proxy for the 'Long Method' smell, not true cyclomatic complexity -- a long function that's mostly a flat sequence of simple statements is a weaker signal than a short function with deep branching. Treat as a prompt to look, not a verdict.",
+    "detector": "long_function",
+    "disposition": null,
+    "disposition_note": "",
+    "evidence": {
+      "absolute_file": "/home/user/ure/examples/incident_walkthrough.py",
+      "file": "examples/incident_walkthrough.py",
+      "line_end": 119,
+      "line_start": 37,
+      "related_files": [],
+      "snippet": null
+    },
+    "first_seen": "2026-09-11T19:20:12.371225+00:00",
+    "id": "ghost-9e21ae3f3ea5",
+    "layer": "mechanical",
+    "severity": "minor",
+    "status": "suppressed",
+    "summary": "'phases' spans 82 lines (threshold 80)"
+  },
+  {
+    "attributes": {},
+    "category": "complexity",
+    "confidence": null,
+    "detail": "Line-count proxy for the 'Long Method' smell, not true cyclomatic complexity -- a long function that's mostly a flat sequence of simple statements is a weaker signal than a short function with deep branching. Treat as a prompt to look, not a verdict.",
+    "detector": "long_function",
+    "disposition": null,
+    "disposition_note": "",
+    "evidence": {
+      "absolute_file": "/home/user/ure/ure_engine/engine.py",
+      "file": "ure_engine/engine.py",
+      "line_end": 325,
+      "line_start": 212,
+      "related_files": [],
+      "snippet": null
+    },
+    "first_seen": "2026-09-11T19:20:12.392288+00:00",
+    "id": "ghost-08c76abc6931",
+    "layer": "mechanical",
+    "severity": "minor",
+    "status": "suppressed",
+    "summary": "'observe' spans 113 lines (threshold 80)"
+  },
+  {
+    "attributes": {},
+    "category": "complexity",
+    "confidence": null,
+    "detail": "Line-count proxy for the 'Long Method' smell, not true cyclomatic complexity -- a long function that's mostly a flat sequence of simple statements is a weaker signal than a short function with deep branching. Treat as a prompt to look, not a verdict.",
+    "detector": "long_function",
+    "disposition": null,
+    "disposition_note": "",
+    "evidence": {
+      "absolute_file": "/home/user/ure/ure_engine/governance_adapter.py",
+      "file": "ure_engine/governance_adapter.py",
+      "line_end": 300,
+      "line_start": 177,
+      "related_files": [],
+      "snippet": null
+    },
+    "first_seen": "2026-09-11T19:20:12.394757+00:00",
+    "id": "ghost-44daaae590b5",
+    "layer": "mechanical",
+    "severity": "minor",
+    "status": "suppressed",
+    "summary": "'decide' spans 123 lines (threshold 80)"
+  },
+  {
+    "attributes": {},
+    "category": "complexity",
+    "confidence": null,
+    "detail": "Line-count proxy for the 'Long Method' smell, not true cyclomatic complexity -- a long function that's mostly a flat sequence of simple statements is a weaker signal than a short function with deep branching. Treat as a prompt to look, not a verdict.",
+    "detector": "long_function",
+    "disposition": null,
+    "disposition_note": "",
+    "evidence": {
+      "absolute_file": "/home/user/ure/ure_engine/recovery.py",
+      "file": "ure_engine/recovery.py",
+      "line_end": 301,
+      "line_start": 162,
+      "related_files": [],
+      "snippet": null
+    },
+    "first_seen": "2026-09-11T19:20:12.396689+00:00",
+    "id": "ghost-b6c15bc7fa8c",
+    "layer": "mechanical",
+    "severity": "minor",
+    "status": "suppressed",
+    "summary": "'_propose' spans 139 lines (threshold 80)"
+  },
+  {
+    "attributes": {},
+    "category": "duplication",
+    "confidence": null,
+    "detail": "Structural fingerprint match within one function, not a whole-function match (near_duplicate_function's detection is blind to this shape). Typical real cause: several branches each hand-build the same kind of object or perform the same sequence of calls -- worth a single shared helper if the branches really are doing the same thing, not just a coincidental resemblance.",
+    "detector": "intra_function_duplicate_block",
+    "disposition": null,
+    "disposition_note": "",
+    "evidence": {
+      "absolute_file": "/home/user/ure/examples/incident_walkthrough.py",
+      "file": "examples/incident_walkthrough.py",
+      "line_end": 50,
+      "line_start": 50,
+      "related_files": [
+        "examples/incident_walkthrough.py:66-66"
+      ],
+      "snippet": null
+    },
+    "first_seen": "2026-09-11T19:20:12.457682+00:00",
+    "id": "ghost-bd54cd092738",
+    "layer": "mechanical",
+    "severity": "minor",
+    "status": "suppressed",
+    "summary": "'phases' repeats the same single statement 2 times (lines 50-50, 66-66): same shape, names/literals differ"
+  },
+  {
+    "attributes": {},
+    "category": "duplication",
+    "confidence": null,
+    "detail": "Structural fingerprint match within one function, not a whole-function match (near_duplicate_function's detection is blind to this shape). Typical real cause: several branches each hand-build the same kind of object or perform the same sequence of calls -- worth a single shared helper if the branches really are doing the same thing, not just a coincidental resemblance.",
+    "detector": "intra_function_duplicate_block",
+    "disposition": null,
+    "disposition_note": "",
+    "evidence": {
+      "absolute_file": "/home/user/ure/ure_engine/governance_adapter.py",
+      "file": "ure_engine/governance_adapter.py",
+      "line_end": 290,
+      "line_start": 290,
+      "related_files": [
+        "ure_engine/governance_adapter.py:243-243"
+      ],
+      "snippet": null
+    },
+    "first_seen": "2026-09-11T19:20:12.538725+00:00",
+    "id": "ghost-7d3e70eb1bfa",
+    "layer": "mechanical",
+    "severity": "minor",
+    "status": "suppressed",
+    "summary": "'decide' repeats the same single statement 2 times (lines 290-290, 243-243): same shape, names/literals differ"
+  },
+  {
+    "attributes": {},
+    "category": "naming",
+    "confidence": null,
+    "detail": "The parameter `trigger` is only ever passed a variable named `observation`, and `observation` is only ever passed to `trigger` -- 1 call site(s) in vaccines.py.\nA one-to-one correspondence is the only case where two names provably denote the same thing: a parameter taking several variables is doing its job, and renaming it would collide with a name legitimately in use. Which of the two should win is yours to pick -- the parameter is the contract, the variable is the caller's local, and neither is automatically right.",
+    "detector": "name_disagreement",
+    "disposition": null,
+    "disposition_note": "",
+    "evidence": {
+      "absolute_file": "/home/user/ure/ure_engine/vaccines.py",
+      "file": "ure_engine/vaccines.py",
+      "line_end": null,
+      "line_start": 222,
+      "related_files": [
+        "ure_engine/vaccines.py"
+      ],
+      "snippet": null
+    },
+    "first_seen": "2026-09-11T19:20:12.721571+00:00",
+    "id": "ghost-6cb72888d2e4",
+    "layer": "mechanical",
+    "severity": "minor",
+    "status": "suppressed",
+    "summary": "`trigger` and `observation` are one value under two names, across 1 file(s)"
+  },
+  {
+    "attributes": {},
+    "category": "naming",
+    "confidence": null,
+    "detail": "The parameter `x` is only ever passed a variable named `normalized_energy`, and `normalized_energy` is only ever passed to `x` -- 2 call site(s) in regimes.py.\nA one-to-one correspondence is the only case where two names provably denote the same thing: a parameter taking several variables is doing its job, and renaming it would collide with a name legitimately in use. Which of the two should win is yours to pick -- the parameter is the contract, the variable is the caller's local, and neither is automatically right.",
+    "detector": "name_disagreement",
+    "disposition": null,
+    "disposition_note": "",
+    "evidence": {
+      "absolute_file": "/home/user/ure/ure_engine/regimes.py",
+      "file": "ure_engine/regimes.py",
+      "line_end": null,
+      "line_start": 163,
+      "related_files": [
+        "ure_engine/regimes.py"
+      ],
+      "snippet": null
+    },
+    "first_seen": "2026-09-11T19:20:12.721814+00:00",
+    "id": "ghost-2626e79a824c",
+    "layer": "mechanical",
+    "severity": "minor",
+    "status": "suppressed",
+    "summary": "`x` and `normalized_energy` are one value under two names, across 1 file(s)"
+  }
+]

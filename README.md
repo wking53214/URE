@@ -318,6 +318,7 @@ the engine from accumulating superstitions.
 | [`RECONSTRUCTION.md`](RECONSTRUCTION.md) | How this repository was rebuilt, and why it was possible |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | The full design, decision by decision |
 | [`docs/PROVENANCE.md`](docs/PROVENANCE.md) | Source-by-source lineage, with evidence classes |
+| [`docs/AUDIT.md`](docs/AUDIT.md) | ghost_buster integrity scan: 0 MAJOR, 0 surviving mutants, and what is baselined |
 
 ---
 

@@ -11,3 +11,7 @@ venv/
 .coverage
 htmlcov/
 .DS_Store
+
+# ghost_tools run history: machine-local, regenerated every scan.
+# The baseline (.ghost_baseline.json) IS tracked; the ledger is not.
+.ghost_ledger.json
