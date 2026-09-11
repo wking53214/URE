@@ -46,3 +46,47 @@ jobs:
         run: ruff check ure_engine tests examples
       - name: Mypy
         run: mypy
+
+  integrity:
+    name: integrity (ghost_buster)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # gitleaks scans commit history, so a shallow clone would hide it.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install "git+https://github.com/wking53214/ghost_tools@main"
+
+      - name: Install gitleaks
+        env:
+          GITLEAKS_VERSION: 8.21.2
+        run: |
+          curl -sSL -o /tmp/gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          chmod +x /tmp/gitleaks
+          /tmp/gitleaks version
+
+      - name: Integrity gate
+        # One step, one gating rule. Blocks on any NEW major/critical finding,
+        # mutation analysis included. The 8 accepted minor findings live in
+        # .ghost_baseline.json with a written justification each in
+        # docs/AUDIT.md; anything beyond them fails the build.
+        #
+        # Deliberately not gating on ghost-buster's exit code: it exits
+        # non-zero for INFORMATIONAL findings too (its own blind spots), so a
+        # raw invocation would fail every build for non-defects. See
+        # tools/integrity_gate.py.
+        run: |
+          python tools/integrity_gate.py . \
+            --secrets-binary /tmp/gitleaks \
+            --mutate --mutate-timeout 120

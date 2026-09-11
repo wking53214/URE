@@ -122,6 +122,45 @@ indirection than it saves.
 Both are genuine 1:1 disagreements and the tool is right to surface them. The
 decision in each case is that the callee's name is the better one.
 
+## The CI gate
+
+`.github/workflows/ci.yml` runs an `integrity` job on every push and pull
+request. It installs ghost_tools and gitleaks, then runs:
+
+```bash
+python tools/integrity_gate.py . --secrets-binary /tmp/gitleaks --mutate --mutate-timeout 120
+```
+
+The gate blocks on any **new** finding at `major` or `critical`. Baselined
+findings are suppressed by ghost_buster itself, so anything reaching the gate
+is new since this baseline was accepted. Mutation analysis runs inside the same
+step, measured at about 9 seconds on this suite, which is cheap enough to run
+on every push rather than on a schedule.
+
+Verified in a clean checkout, both directions:
+
+| Condition | Result |
+|---|---|
+| Unmodified tree | `0 finding(s) beyond baseline`, exit 0 |
+| Injected `swallowed_exception` | `FAIL -- 1 blocking finding(s)`, exit 1 |
+
+The gate deliberately does **not** use ghost_buster's exit code. That is
+non-zero whenever the tool has anything at all to say, INFORMATIONAL blind
+spots included, so gating on it would fail every build for non-defects, and a
+gate that always fails gets switched off.
+
+### What the gate does not catch
+
+Measured, not assumed. `--mutate` selects tests "shaped like they check
+nothing". That judgment is made over the whole test, so a weak assertion inside
+an otherwise strong test is invisible to it. Reverting
+`test_learning_raises_the_score` to a bare `assert ... > 0.0` while leaving the
+neighbouring `assert len(bve) == 4` in place produced **zero** findings, where
+the original fully-vacuous form had been caught as MAJOR.
+
+A green gate therefore means "no new finding of a kind ghost_buster looks for".
+It is not evidence that the suite is load-bearing.
+
 ## Checks that do not run here, and why
 
 The tool flags checks that never run, on the grounds that "a check that never
@@ -133,6 +172,7 @@ and found nothing." Recording the reasons, as it asks:
 | `boundary` | Not applicable | Single repository reaching for no unprovided packages. URE has zero runtime dependencies, so there is no boundary to scan. |
 | `kernel` | Not applicable | Opt-in, requires `--kernel PATH` pointing at a kernel spec. URE defines no kernel contract. |
 | `correlate` | Nothing to connect | No second finding source to correlate against. |
+| `branches` | Disabled in the gate | `unmerged_branch` reports MAJOR when a branch has commits not in the default branch. On a pull request that is the definition of a pull request, and the detector states it "has no visibility into GitHub pull-request state". Left on, it would fail every PR by construction. Run `ghost-buster .` without `--no-branches` locally when you do want the check. |
 
 These are configuration facts, not defects, which is why they are documented
 here rather than carried in the baseline: they depend on run history and would
