@@ -205,9 +205,10 @@ worth arguing about.
 ## 7. Red-team caveats
 
 URE has been attacked deliberately. `tests/test_adversarial.py` holds the
-attacks; the known weaknesses are marked `xfail(strict=True)` so that fixing
-one forces the marker to be flipped rather than letting it drift closed
-silently. Read this section before Stage 3, not after.
+attacks and now passes with none marked expected-to-fail. Where an attack
+cannot be closed outright, the tests assert what it *costs* an adversary, so a
+change that makes one cheap fails in CI rather than in production. Read this
+section before Stage 3, not after.
 
 **Closed.** The sub-threshold slow boil. An adversary holding a constant
 hostile rate below the classifier's boundary used to be invisible at *any*
@@ -235,18 +236,38 @@ Two consequences for your rollout:
   deliberately. `assessment.hostile_dwell` and the dwell baseline are both
   exposed so an operator can see what a call was judged against.
 
-**Still open, and relevant to this integration:**
+**Also closed, both memory-poisoning attacks.**
 
-- **AMX decoy flooding.** Attack memory evicts weakest-first at capacity, so an
-  adversary who can mint signatures at higher severity than a real profile can
-  evict URE's memory of themselves. Mitigation for Stage 3: size
-  `amx_capacity` well above the expected signature count, and alert on rapid
-  growth in distinct signatures, which is itself an attack indicator.
-- **BVE window eviction.** Flooding adverse episodes evicts the benign evidence
-  that blocks false vaccine synthesis, after which URE applies pressure to
-  legitimate traffic. Mitigation for Stage 3: leave `enable_learning=False`
-  until Stage 4. The integration gets URE's classification without its
-  learning, which is the part that is under attacker influence.
+*AMX decoy flooding.* Attack memory evicted weakest-first on severity, and
+severity is whatever the caller reported, so an adversary minting signatures at
+0.99 evicted a real profile at 0.95. Eviction now ranks on corroboration
+(recurrence across elapsed time, which must be spent rather than claimed) and
+capacity is partitioned so signatures seen once can evict nothing but each
+other. 20,000 minted signatures at maximum severity no longer displace one real
+profile.
+
+An adversary who pays for corroborated decoys can still displace memory, and
+that half is detected rather than prevented: replacing a full memory takes
+thousands of adverse events in minutes, and `AttackMemoryExchange.flood_pressure`
+reports a memory that is both full and mostly new, which feeds adversarial
+pressure. The attack converts into a detection.
+
+*BVE poisoning.* Benign evidence was counted from the same bounded ring buffer
+as adverse evidence, so flooding adverse episodes flushed the evidence that
+blocked synthesis, and URE vaccinated against ordinary traffic. Benign evidence
+now lives in a durable, frequency-weighted ledger, and a pattern known to occur
+in legitimate traffic is never vaccinated against at any ratio.
+
+The residual is priced rather than eliminated: burying evidence seen N times
+costs roughly `4096 * (N + 1)` requests that **succeed**, since only non-adverse
+outcomes write to that ledger. An adversary who can push tens of thousands of
+successful requests does not need this attack.
+
+**What this changes for your rollout.** The Stage 3 caveat about leaving
+`enable_learning=False` until Stage 4 was written when both of these were open.
+It is now a judgement call rather than a requirement. The conservative reading
+still holds, though: learning is the part of URE under direct attacker
+influence, and Stage 3 has enough to prove without it.
 
 **An architectural limit, not a defect.** Once every pressure clamps at 1.0,
 further escalation is invisible: a 10x increase produces a byte-identical state

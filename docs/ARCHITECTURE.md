@@ -514,8 +514,8 @@ potency. Memory is O(capacity), not O(requests).
 | `trajectory.py` | velocity, acceleration, volatility, oscillation | no |
 | `dwell.py` | time spent under sustained hostile pressure | no |
 | `regimes.py` | soft classification, confidence, entropy | no |
-| `attack_memory.py` | AMX | telemetry only |
-| `vaccines.py` | BVE | telemetry only |
+| `attack_memory.py` | AMX, corroboration-weighted retention | telemetry only |
+| `vaccines.py` | BVE, durable benign evidence ledger | telemetry only |
 | `recovery.py` | action ladder, hysteresis | no |
 | `resilience.py` | the executive index | no |
 | `thresholds.py` | adaptive threshold controller v2 | no |

@@ -18,12 +18,16 @@ Each is a deliberate design choice. Each is also a lever.
 
 HOW THE KNOWN WEAKNESSES ARE ENCODED
 ------------------------------------
-Two of these attacks still succeed: A4 (AMX decoy flooding) and A5b (flushing
-benign evidence out of BVE's observation window). A1 is closed by
-:mod:`ure_engine.dwell`. A6 turned out to be an architectural limit rather than
-a defect, and is pinned as one below with a corrected diagnosis.
+All six are now closed, or pinned as limits with their cost measured. A1 is
+closed by :mod:`ure_engine.dwell`; A4 and A5b by corroboration-weighted
+eviction in AMX and a durable benign ledger in BVE. A6 turned out to be an
+architectural limit rather than a defect, and is pinned as one below with a
+corrected diagnosis.
 
-The ones that still succeed are marked
+Where an attack cannot be closed outright, the tests price it instead: what it
+costs an adversary is asserted, so a change that makes the attack cheap fails
+here rather than in production. Any weakness that is accepted rather than fixed
+is marked
 ``xfail(strict=True)`` rather than deleted or softened, which means:
 
 * the suite stays green while the weakness is known and accepted;
@@ -40,8 +44,6 @@ the encoding that makes both loud.
 """
 
 from __future__ import annotations
-
-import pytest
 
 from ure_engine import RecoveryAction, SystemRegime, UREConfig, UREEngine
 from ure_engine.vaccines import Observation
@@ -319,15 +321,14 @@ def test_short_burst_does_not_lock_the_system_in_a_restricted_state() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="KNOWN WEAKNESS: AMX evicts weakest-first at capacity, so an "
-           "adversary who can mint signatures at higher severity than a real "
-           "profile can evict URE's memory of themselves. Fix requires "
-           "eviction to weigh campaign status and age, not severity alone.",
-)
 def test_attack_memory_survives_a_flood_of_decoy_signatures() -> None:
-    """A real attack profile must not be evictable by volume."""
+    """A real attack profile must not be evictable by volume.
+
+    CLOSED. Eviction used to rank on ``effective_severity`` alone, and severity
+    is whatever the caller reported, so an adversary minting signatures at 0.99
+    evicted a real profile sitting at 0.95. The memory forgot precisely the
+    thing it most needed to remember, and it cost nothing to make it happen.
+    """
     engine = UREEngine(UREConfig(amx_capacity=64))
     amx = engine.attack_memory
     amx.remember("REAL-ATTACK", severity=0.95, now=0.0)
@@ -337,6 +338,105 @@ def test_attack_memory_survives_a_flood_of_decoy_signatures() -> None:
     assert amx.lookup("REAL-ATTACK", now=600.0) is not None, (
         "500 decoys evicted the real attack profile"
     )
+
+
+def test_minting_signatures_cannot_evict_established_memory_at_any_volume() -> None:
+    """The structural guarantee, not merely a favourable ranking.
+
+    Ordering alone would be a soft defence: an adversary who out-claims the
+    incumbent by a hair still wins, and severity is free to claim. So capacity
+    is partitioned instead. Signatures seen exactly once compete only for
+    their reserved share, which means a flood of minted signatures can evict
+    nothing but each other however many of them there are.
+    """
+    engine = UREEngine(UREConfig(amx_capacity=64))
+    amx = engine.attack_memory
+    amx.remember("REAL-ATTACK", severity=0.95, now=0.0)
+
+    now = 1.0
+    for index in range(20_000):
+        amx.remember(f"decoy-{index}", severity=1.0, now=now)
+        now += 0.05
+
+    assert amx.lookup("REAL-ATTACK", now=now) is not None, (
+        "20,000 minted signatures at maximum severity displaced a real profile; "
+        "the probation partition is not holding"
+    )
+    assert len(amx) <= 64
+
+
+def test_severity_alone_cannot_outrank_corroboration() -> None:
+    """The ordering that makes the partition work, pinned directly.
+
+    Severity is supplied by the caller. Recurrence across elapsed time is
+    spent, not supplied. Retention must reflect that asymmetry, or an adversary
+    buys rank with a number.
+    """
+    engine = UREEngine(UREConfig(amx_capacity=1024))
+    amx = engine.attack_memory
+
+    amx.remember("established", severity=0.60, now=0.0)
+    amx.remember("established", severity=0.60, now=120.0)
+    amx.remember("established", severity=0.60, now=300.0)
+    amx.remember("newcomer", severity=1.0, now=300.0)
+
+    established = amx.lookup("established", now=301.0)
+    newcomer = amx.lookup("newcomer", now=301.0)
+    assert established is not None and newcomer is not None
+    assert established.retention(301.0) > newcomer.retention(301.0), (
+        "a maximum-severity first sighting outranks a signature that has "
+        "actually been recurring; severity is deciding eviction again"
+    )
+
+
+def test_a_flood_that_does_succeed_announces_itself() -> None:
+    """The half that cannot be fixed by ranking, so it is detected instead.
+
+    An adversary willing to pay for corroborated decoys will match whatever
+    evidence shape the incumbent has. What they cannot do is stay quiet about
+    it: displacing a full memory takes thousands of adverse events in minutes.
+    A memory that is full AND mostly new has just been replaced, and that is
+    reported as adversarial pressure so the attack converts into a detection.
+    """
+    engine = UREEngine(UREConfig(amx_capacity=64))
+    amx = engine.attack_memory
+    _, t = run(engine, BENIGN, 100)
+
+    for index in range(400):
+        for _ in range(3):
+            amx.remember(f"decoy-{index}", severity=0.99, now=float(t))
+            t += 1
+
+    assert amx.flood_pressure(now=float(t)) > 0.9
+    assessment = engine.observe(BENIGN, now=float(t))
+    assert assessment.regime.value not in BENIGN_REGIMES, (
+        f"the memory was replaced wholesale and URE reported "
+        f"{assessment.regime.value} on the next observation"
+    )
+
+
+def test_ordinary_signature_discovery_is_not_mistaken_for_a_flood() -> None:
+    """The false positive the flood detector would cause if it were a rate.
+
+    It is deliberately a fraction of this deployment's own memory rather than a
+    signatures-per-minute threshold, because there is no universal answer to
+    how many new signatures a healthy gateway sees. Both conditions have to
+    hold: the memory must be full, and it must be mostly new.
+    """
+    engine = UREEngine(UREConfig(amx_capacity=64))
+    amx = engine.attack_memory
+
+    # Filling up. Trivially all-new, and must not read as flooded.
+    for index in range(40):
+        amx.remember(f"sig-{index}", severity=0.9, now=float(index))
+    assert amx.flood_pressure(now=40.0) == 0.0
+
+    # Full, and still discovering, but slowly. Steady state, not replacement.
+    now = 100.0
+    for index in range(200):
+        amx.remember(f"steady-{index}", severity=0.5, now=now)
+        now += 60.0
+    assert amx.flood_pressure(now=now) == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -368,16 +468,19 @@ def test_benign_evidence_blocks_false_vaccine_synthesis() -> None:
     assert bve.immunize(innocuous, now=999.0).pressure == 0.0
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="KNOWN WEAKNESS: BVE's observation window is bounded, so flooding "
-           "adverse episodes evicts the benign evidence that would otherwise "
-           "block synthesis. The discrimination check then sees an unopposed "
-           "pattern. Fix requires benign evidence to be durable rather than "
-           "window-scoped, or a minimum benign-observation count.",
-)
 def test_benign_evidence_cannot_be_flushed_out_of_the_window() -> None:
-    """Window eviction must not defeat the discrimination threshold."""
+    """Window eviction must not defeat the discrimination threshold.
+
+    CLOSED. Benign evidence used to be counted from the same bounded ring
+    buffer as adverse evidence, so flooding adverse episodes past its length
+    evicted the benign observations that would have blocked synthesis. The
+    ratio then saw an unopposed pattern and vaccinated against ordinary
+    traffic, which is a defence attacking its own users.
+
+    Evidence that traffic is innocent now lives in a durable ledger. Evidence
+    has to outlive the ring buffer or it is not evidence, it is a recency
+    effect.
+    """
     innocuous = ("login", "fetch_profile", "list_items")
     window = 64
     engine = UREEngine(UREConfig(synthesis_threshold=3))
@@ -395,6 +498,113 @@ def test_benign_evidence_cannot_be_flushed_out_of_the_window() -> None:
     assert bve.immunize(innocuous, now=1e6).pressure == 0.0, (
         "flooding the observation window produced false vaccines that fire "
         "on legitimate traffic"
+    )
+
+
+def test_a_pattern_seen_behaving_benignly_is_never_vaccinated_at_any_ratio() -> None:
+    """Durable evidence alone is not enough; the veto is what finishes it.
+
+    With a durable ledger but only a ratio test, the adversary still wins by
+    volume: they control the adverse side of P(adverse | pattern) and need only
+    out-produce the benign evidence two or three to one.
+
+    So a pattern known to occur in legitimate traffic is never vaccinated
+    against, at any ratio. The vaccine would fire on that traffic, and no
+    adverse count makes blocking real users acceptable. An attack that really
+    does reuse a benign pattern has to be stopped by signature or policy, not
+    by a rule that also hits customers.
+    """
+    innocuous = ("login", "fetch_profile", "list_items")
+    engine = UREEngine(UREConfig(synthesis_threshold=3))
+    bve = engine.vaccines
+
+    t = 0.0
+    for _ in range(4):
+        bve.observe(Observation(markers=innocuous, adverse=False, timestamp=t))
+        t += 1
+    for _ in range(4000):
+        bve.observe(Observation(markers=innocuous, adverse=True, timestamp=t))
+        t += 1
+
+    assert len(bve) == 0, "a 1000:1 adverse ratio bought a vaccine anyway"
+    assert bve.immunize(innocuous, now=1e6).pressure == 0.0
+
+
+def test_the_benign_ledger_still_learns_when_it_is_full() -> None:
+    """The false positive a frequency-ranked ledger causes if left unpartitioned.
+
+    Ranking eviction on sighting count is what protects well-corroborated
+    evidence from being flushed. It also means a full ledger evicts every
+    newcomer at one sighting, before it can ever reach two, so legitimate new
+    traffic is never recorded as benign and becomes eligible for false
+    vaccination. That is the failure this ledger exists to prevent,
+    reintroduced one level down, and it was real until a probation share was
+    reserved.
+    """
+    innocuous = ("login", "fetch_profile", "list_items")
+    engine = UREEngine(UREConfig(synthesis_threshold=3))
+    bve = engine.vaccines
+
+    t = 0.0
+    for index in range(5000):
+        for _ in range(5):
+            bve.observe(
+                Observation(markers=(f"o{index}a", f"o{index}b"), adverse=False, timestamp=t)
+            )
+            t += 1
+
+    for _ in range(4):
+        bve.observe(Observation(markers=innocuous, adverse=False, timestamp=t))
+        t += 1
+    for _ in range(300):
+        bve.observe(Observation(markers=innocuous, adverse=True, timestamp=t))
+        t += 1
+
+    assert bve.immunize(innocuous, now=1e6).pressure == 0.0, (
+        "a benign pattern first seen after the ledger filled up was never "
+        "recorded, and got vaccinated against"
+    )
+
+
+def test_burying_benign_evidence_costs_the_adversary_successful_traffic() -> None:
+    """The residual, priced rather than papered over.
+
+    Evidence cannot be both durable and unboundedly stored. An adversary who
+    generates enough distinct, more-frequently-seen benign marker sets does
+    eventually push a protected pattern out of the ledger.
+
+    What it costs them is the point. Burying evidence seen N times requires
+    roughly ``BENIGN_LEDGER_CAPACITY * (N + 1)`` requests that **succeed**,
+    because only non-adverse outcomes write to this ledger. An adversary who
+    can push twenty thousand successful requests through does not need the
+    vaccine attack. This pins that moderate effort buys nothing, so a change
+    that makes the attack cheap fails here.
+    """
+    innocuous = ("login", "fetch_profile", "list_items")
+    engine = UREEngine(UREConfig(synthesis_threshold=3))
+    bve = engine.vaccines
+
+    t = 0.0
+    for _ in range(4):
+        bve.observe(Observation(markers=innocuous, adverse=False, timestamp=t))
+        t += 1
+    for index in range(2000):
+        for _ in range(5):
+            bve.observe(
+                Observation(
+                    markers=(f"j{index}a", f"j{index}b", f"j{index}c"),
+                    adverse=False,
+                    timestamp=t,
+                )
+            )
+            t += 1
+    for _ in range(200):
+        bve.observe(Observation(markers=innocuous, adverse=True, timestamp=t))
+        t += 1
+
+    assert bve.immunize(innocuous, now=1e6).pressure == 0.0, (
+        "10,000 successful attacker requests were enough to bury the benign "
+        "evidence; the ledger's exchange rate has collapsed"
     )
 
 

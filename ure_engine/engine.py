@@ -244,8 +244,16 @@ class UREEngine:
             recall = self._amx.recall(frame.signatures, now=timestamp)
             immunization = self._bve.immunize(frame.markers, now=timestamp)
             ambient = self._amx.ambient_pressure(now=timestamp)
+            # A flood aimed at evicting AMX's memory of an adversary is itself
+            # adversarial activity, and it is the one part of that attack that
+            # cannot be made quiet: it takes thousands of adverse events.
+            flood = self._amx.flood_pressure(now=timestamp)
             learned = clamp(
-                1.0 - (1.0 - recall.pressure) * (1.0 - immunization.pressure) * (1.0 - ambient)
+                1.0
+                - (1.0 - recall.pressure)
+                * (1.0 - immunization.pressure)
+                * (1.0 - ambient)
+                * (1.0 - flood)
             )
             if learned > 0.0:
                 state = state.raised("adversarial_pressure", learned)

@@ -58,6 +58,22 @@ __all__ = [
 #: Minimum number of incidents sharing a pattern before a vaccine is synthesized.
 DEFAULT_SYNTHESIS_THRESHOLD: int = 3
 
+#: Benign sightings of a pattern after which it will never be vaccinated
+#: against, whatever the adverse count. See ``_benign_evidence``.
+BENIGN_VETO: int = 3
+
+#: Distinct benign marker sets retained as durable evidence. Independent of the
+#: observation window, because the window is what the poisoning attack flushes.
+BENIGN_LEDGER_CAPACITY: int = 4096
+
+#: Share of the ledger reserved for marker sets seen only once. Without it the
+#: ledger ossifies: a full ledger of well-corroborated entries evicts every
+#: newcomer at count 1, so a newcomer can never reach count 2, and legitimate
+#: new traffic is never recorded as benign. That would make new traffic
+#: eligible for false vaccination, which is the failure this ledger exists to
+#: prevent, reintroduced one level down.
+BENIGN_PROBATION_FRACTION: float = 0.25
+
 #: Vaccines below this effectiveness are retired.
 RETIREMENT_FLOOR: float = 0.15
 
@@ -181,6 +197,8 @@ class BehavioralVaccineEngine:
 
     __slots__ = (
         "_activation_threshold",
+        "_benign_evidence",
+        "_benign_index",
         "_capacity",
         "_counter",
         "_lock",
@@ -202,6 +220,18 @@ class BehavioralVaccineEngine:
         self._synthesis_threshold = synthesis_threshold
         self._activation_threshold = clamp(activation_threshold)
         self._observations: deque[Observation] = deque(maxlen=observation_window)
+        # Durable, frequency-weighted record of marker sets that have behaved
+        # benignly. Deliberately NOT the observation window: the window is
+        # bounded, and flushing it by flooding adverse episodes is precisely
+        # how an adversary got false vaccines synthesized against legitimate
+        # traffic. Evidence that traffic is innocent has to outlive the ring
+        # buffer or it is not evidence, it is a recency effect.
+        self._benign_evidence: dict[tuple[str, ...], list[float]] = {}
+        # marker -> ledger keys containing it. Without this, checking one
+        # candidate pattern scans the whole ledger, and synthesis considers
+        # ~21 patterns per adverse episode: an adversary would only have to
+        # send adverse traffic to make the engine expensive.
+        self._benign_index: dict[str, set[tuple[str, ...]]] = {}
         self._vaccines: dict[str, BehavioralVaccine] = {}
         self._counter = 0
         self._lock = threading.RLock()
@@ -216,8 +246,93 @@ class BehavioralVaccineEngine:
         with self._lock:
             self._observations.append(observation)
             if not observation.adverse:
+                self._record_benign(observation)
                 return []
             return self._synthesize(observation)
+
+    def _record_benign(self, observation: Observation) -> None:
+        """Add one benign sighting to the durable ledger. Caller holds the lock."""
+        key = tuple(observation.markers)
+        record = self._benign_evidence.get(key)
+        if record is None:
+            self._benign_evidence[key] = [1.0, observation.timestamp]
+            for marker in set(key):
+                self._benign_index.setdefault(marker, set()).add(key)
+        else:
+            record[0] += 1.0
+            record[1] = max(record[1], observation.timestamp)
+
+        if len(self._benign_evidence) <= BENIGN_LEDGER_CAPACITY:
+            return
+        self._trim_benign()
+
+    def _drop_benign(self, key: tuple[str, ...]) -> None:
+        del self._benign_evidence[key]
+        for marker in set(key):
+            bucket = self._benign_index.get(marker)
+            if bucket is not None:
+                bucket.discard(key)
+                if not bucket:
+                    del self._benign_index[marker]
+
+    def _trim_benign(self) -> None:
+        """Bring the ledger back within capacity. Caller holds the lock.
+
+        Partitioned the same way AMX partitions attack memory, and for the same
+        reason. Ranking on sighting count alone protects well-corroborated
+        evidence, which is what the poisoning attack needs to displace, but it
+        also means a full ledger evicts every newcomer at count 1 before it can
+        ever reach count 2. Reserving a share for newcomers keeps the ledger
+        able to learn without making established evidence cheap to flush.
+
+        Within each region: fewest sightings first, oldest breaking ties. A
+        marker set seen hundreds of times is close to immovable, and that is
+        the exchange rate. Burying it means out-generating it in *successful*
+        traffic, not merely in adverse episodes, and an adversary whose traffic
+        succeeds that often did not need the vaccine attack.
+        """
+        established = [k for k, v in self._benign_evidence.items() if v[0] >= 2.0]
+        probation = [k for k, v in self._benign_evidence.items() if v[0] < 2.0]
+        weakest = lambda keys: sorted(  # noqa: E731
+            keys, key=lambda k: (self._benign_evidence[k][0], self._benign_evidence[k][1])
+        )
+
+        allowance = max(
+            int(BENIGN_LEDGER_CAPACITY * BENIGN_PROBATION_FRACTION),
+            BENIGN_LEDGER_CAPACITY - len(established),
+        )
+        for key in weakest(probation)[: max(0, len(probation) - allowance)]:
+            self._drop_benign(key)
+
+        overflow = len(self._benign_evidence) - BENIGN_LEDGER_CAPACITY
+        if overflow > 0:
+            for key in weakest(established)[:overflow]:
+                self._drop_benign(key)
+
+    def _benign_support(self, pattern: Sequence[str]) -> int:
+        """Total durable benign sightings of any marker set containing ``pattern``.
+
+        Narrowed through the marker index first. Containing the pattern
+        requires containing every marker in it, so intersecting the index
+        buckets gives a small candidate set, and only those are order-checked.
+        """
+        candidates: set[tuple[str, ...]] | None = None
+        for marker in pattern:
+            bucket = self._benign_index.get(marker)
+            if not bucket:
+                return 0
+            candidates = bucket.copy() if candidates is None else (candidates & bucket)
+            if not candidates:
+                return 0
+        if not candidates:
+            return 0
+        return int(
+            sum(
+                self._benign_evidence[markers][0]
+                for markers in candidates
+                if _contains(markers, pattern)
+            )
+        )
 
     def _synthesize(self, trigger: Observation) -> list[BehavioralVaccine]:
         """Derive vaccines from patterns recurring across adverse episodes.
@@ -245,7 +360,27 @@ class BehavioralVaccineEngine:
                 if adverse_hits < self._synthesis_threshold:
                     continue
 
-                benign_hits = sum(1 for o in benign if _contains(o.markers, pattern))
+                # Counted from the durable ledger, not only the window. The
+                # window is bounded, so an adversary who floods adverse
+                # episodes past its length evicts the benign observations that
+                # would otherwise block synthesis, and the ratio below then
+                # sees an unopposed pattern.
+                windowed = sum(1 for o in benign if _contains(o.markers, pattern))
+                benign_hits = max(windowed, self._benign_support(pattern))
+
+                # An absolute veto, not just a ratio. A ratio is whoever
+                # generates more volume, and the adversary controls the adverse
+                # side of it: with durable benign evidence alone they need only
+                # out-produce it by a factor of two or three. But a pattern
+                # known to occur in legitimate traffic must never be vaccinated
+                # against at any ratio, because the vaccine will fire on that
+                # traffic, and the cost of blocking real users is not something
+                # a higher adverse count makes acceptable. If an attack really
+                # does reuse a benign pattern, it has to be stopped by
+                # signature or policy, not by a rule that also hits customers.
+                if benign_hits >= BENIGN_VETO:
+                    continue
+
                 total = adverse_hits + benign_hits
                 # Discriminative power: P(adverse | pattern). A pattern that
                 # shows up just as often in benign traffic predicts nothing,
@@ -393,6 +528,8 @@ class BehavioralVaccineEngine:
         """
         with self._lock:
             self._observations.clear()
+            self._benign_evidence.clear()
+            self._benign_index.clear()
 
     # -- introspection ----------------------------------------------------
 
