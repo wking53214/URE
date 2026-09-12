@@ -83,6 +83,7 @@ from .lyapunov import (
 from .recovery import RecoveryAction, RecoveryPlanner, RecoveryVector
 from .regimes import RegimeClassifier, RegimeProfile, SystemRegime
 from .resilience import ResilienceBreakdown, ResilienceIndex
+from .sentinel_adapter import SentinelAdapter, SentinelConfig
 from .state_vector import PRESSURE_NAMES, PolicyTelemetry, StateVector, clamp
 from .telemetry import SmoothingAdapter, TelemetryAdapter, TelemetryFrame
 from .thresholds import AdaptiveThresholdController, ThresholdDecision
@@ -147,6 +148,8 @@ __all__ = [
     "SmoothingAdapter",
     # governance
     "GSATelemetryAdapter",
+    "SentinelAdapter",
+    "SentinelConfig",
     "GovernanceOutcome",
     # legacy compatibility
     "GatewayHealthEngine",
