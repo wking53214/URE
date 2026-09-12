@@ -107,12 +107,24 @@ def test_a_sustained_rejection_rate_reaches_the_engine_as_threat() -> None:
     adapter = SentinelAdapter(CONFIG)
     engine = UREEngine(UREConfig(smoothing_alpha=0.6, slope_window=12,
                                  history_window=64, restore_patience=5))
-    calls = rejections = 0
-    for step in range(60):
+    calls = rejections = step = 0
+
+    # A quiet stretch first, so the engine knows what this deployment looks
+    # like when nobody is attacking it. URE judges hostile pressure against
+    # that baseline rather than against a fixed number, precisely so that a
+    # deployment which has always rejected 40% is not called ATTACKED for it.
+    for _ in range(120):
+        calls += 100
+        engine.observe(adapter.to_frame(snapshot(calls, 1, rejections), stats()),
+                       now=float(step))
+        step += 1
+
+    for _ in range(60):
         calls += 60
         rejections += 40
         frame = adapter.to_frame(snapshot(calls, 1, rejections), stats())
         assessment = engine.observe(frame, now=float(step))
+        step += 1
 
     # 40 rejections in 100 attempts, routed at half weight into risk_score.
     assert frame.blocked_rate == 0.4

@@ -212,8 +212,28 @@ silently. Read this section before Stage 3, not after.
 **Closed.** The sub-threshold slow boil. An adversary holding a constant
 hostile rate below the classifier's boundary used to be invisible at *any*
 duration, measured at a knife edge of 36.2%. `ure_engine/dwell.py` integrates
-exposure instead of differentiating it, which drops the evasion ceiling to
-about 19.5% and makes detection time fall as the rate rises.
+exposure instead of differentiating it.
+
+It measures excess over **this deployment's own learned normal**, not an
+absolute level. That distinction is load-bearing for you rather than academic:
+an earlier version used a fixed floor, and a deployment whose ordinary
+rejection rate was 25% was classified ATTACKED after 25 observations with a
+recommended action of ISOLATE, with nothing wrong. At Stage 3 that is an outage
+caused by the defence. The learned baseline removes it by construction, and the
+result is better than the original engine on both axes at once: no steady rate
+below 39% alarms (the original alarmed from 36.2%), and a 30% rate held against
+a quiet baseline is detected in 13 observations instead of never.
+
+Two consequences for your rollout:
+
+* **Stage 1 is also the calibration period.** URE needs to see your normal
+  before it can judge a departure from it, and the first 32 observations are
+  spent acquiring that with detection disabled.
+* **An engine started during an attack learns the attack as normal**, up to
+  `dwell_baseline_ceiling`. It self-heals on the first genuine lull, but after
+  any confirmed incident the right move is `engine.reset()` to re-baseline
+  deliberately. `assessment.hostile_dwell` and the dwell baseline are both
+  exposed so an operator can see what a call was judged against.
 
 **Still open, and relevant to this integration:**
 

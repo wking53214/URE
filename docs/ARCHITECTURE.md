@@ -216,27 +216,62 @@ Requiring genuine proximity to collapse is what separates the two. This was
 caught by running `examples/incident_walkthrough.py` and watching a traffic
 surge get quarantined.
 
-**`dwell` is duration, not magnitude.** Everything else in the classifier
-describes a level or a rate of change, and both read nothing for a hostile rate
-that is simply held constant. Red-teaming measured the consequence: a sustained
-rate below 36.2% evaded detection at *any* duration, permanently. `dwell`
-(`ure_engine/dwell.py`) integrates time spent above a floor of hostile pressure
-and enters ATTACKED multiplicatively, which drops the evasion ceiling to about
-19.5% and makes detection time fall as the rate rises.
+**`dwell` is duration relative to normal, not an absolute level.** Everything
+else in the classifier describes a level or a rate of change, and both read
+nothing for a hostile rate simply held constant. Red-teaming measured the
+consequence: a sustained rate below 36.2% evaded detection at *any* duration.
+`dwell` (`ure_engine/dwell.py`) integrates exposure instead of differentiating
+it.
 
-Two restrictions keep it from becoming a false-positive generator:
+The first version charged above a **fixed floor** of 0.12, and that was a worse
+bug than the attack it fixed. A fixed floor is a claim about every deployment
+that will ever run URE, and plenty of healthy gateways sit permanently above
+it: rate limits reject a steady fraction, one misconfigured client retries
+forever, a crawler trips a rule on every request. Measured, a deployment whose
+normal rejection rate was 25% read ATTACKED after 25 observations and
+recommended ISOLATE with no adversary present. A missed slow boil costs you the
+attacker's throughput; a false ISOLATE is an outage you inflicted on yourself
+with your own defence, and the engine that does it gets switched off.
 
-* It is computed over `max(threat, adversarial)` **only**. Legitimate load is
-  supposed to persist; a dwell term over operational pressure would turn every
-  busy afternoon into an incident.
-* The amplification fades out as hostile pressure approaches 1.0, because where
-  the level already says everything, duration adds nothing. Without that fade,
-  a genuine cascade classifies ATTACKED instead of CASCADING and the recovery
-  action drops from QUARANTINE to ISOLATE. `test_quarantine_governs_regardless_of_score`
-  caught it.
+So there is no fixed floor. The module learns the hostile pressure *this*
+deployment shows when nobody is attacking it, and charges only on the excess.
+A system's own steady state cannot be anomalous relative to itself, so the
+steady-state false positive is gone by construction rather than by choosing a
+better constant. There is no better constant: the quantity is genuinely
+deployment-specific.
 
-`tests/test_adversarial.py` holds both the attack it closes and the false
-positive it must not cause.
+| | false positive from | detects 30% held |
+|---|---|---|
+| Pre-dwell engine | 36.2% | never |
+| Fixed floor 0.12 | 18.5% | 18 obs |
+| Learned baseline | 39.0% | 13 obs |
+
+Strictly better than the original engine on both axes at once.
+
+`dwell_baseline_ceiling` (default 0.26) caps what a deployment may learn as
+normal, which is what stops an engine started *during* an attack from
+calibrating to it permanently. Ceiling plus margin lands on 0.36, exactly where
+the pre-dwell engine detected on affinity alone, so an adversary who spends
+tens of thousands of observations walking the baseline to its cap arrives at a
+wall the original engine already enforced and gains nothing for the patience.
+
+Three further properties keep it honest:
+
+* The baseline falls fast and rises slowly, and rises ten times slower still
+  once dwell is elevated, so a walk cannot proceed through the evidence it
+  generates. `test_walking_the_baseline_upward_is_slow_and_capped` prices it.
+* Cold-start calibration self-heals, because the fast downward tracking means
+  the first genuine lull re-baselines.
+* Amplification fades out as hostile pressure approaches 1.0, since where the
+  level already says everything, duration adds nothing. Without that fade a
+  genuine cascade classifies ATTACKED instead of CASCADING and the recovery
+  action drops from QUARANTINE to ISOLATE.
+  `test_quarantine_governs_regardless_of_score` caught it.
+
+The residual evasion band is exactly the band in which an adversary is
+indistinguishable from a legitimate deployment that simply rejects a lot of
+traffic. It cannot be closed without alarming on that deployment, which is the
+information-theoretic limit rather than a tuning failure.
 
 ### Reachability
 

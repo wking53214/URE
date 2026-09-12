@@ -81,6 +81,7 @@ class UREConfig:
         "adversarial_scale",
         "amx_capacity",
         "amx_half_life",
+        "dwell_baseline_ceiling",
         "enable_learning",
         "history_window",
         "latency_ceiling_ms",
@@ -106,6 +107,7 @@ class UREConfig:
         vaccine_capacity: int = 512,
         synthesis_threshold: int = 3,
         restore_patience: int = 3,
+        dwell_baseline_ceiling: float = 0.26,
         enable_learning: bool = True,
     ) -> None:
         self.history_window = history_window
@@ -119,6 +121,7 @@ class UREConfig:
         self.vaccine_capacity = vaccine_capacity
         self.synthesis_threshold = synthesis_threshold
         self.restore_patience = restore_patience
+        self.dwell_baseline_ceiling = dwell_baseline_ceiling
         self.enable_learning = enable_learning
 
 
@@ -169,7 +172,9 @@ class UREEngine:
         )
         self._trajectory = TrajectoryEngine(window=self._config.history_window)
         self._classifier = RegimeClassifier(energy_max=ENERGY_MAX)
-        self._dwell = HostileDwell()
+        self._dwell = HostileDwell(
+            baseline_ceiling=self._config.dwell_baseline_ceiling
+        )
         self._amx = attack_memory or AttackMemoryExchange(
             capacity=self._config.amx_capacity, half_life=self._config.amx_half_life
         )

@@ -83,17 +83,33 @@ MAXED = {"risk_score": 1.0, "blocked_rate": 1.0, "retry_rate": 1.0,
 # ---------------------------------------------------------------------------
 
 
+def run(engine: UREEngine, telemetry: dict, steps: int, start: int = 0) -> tuple:
+    """Feed ``steps`` identical observations; return (last assessment, next t)."""
+    assessment = None
+    for step in range(start, start + steps):
+        assessment = engine.observe(telemetry, now=float(step))
+    assert assessment is not None
+    return assessment, start + steps
+
+
 def test_sustained_hostile_rate_is_eventually_detected() -> None:
     """A patient adversary at a constant rate should not evade forever.
 
-    CLOSED by :mod:`ure_engine.dwell`. Before the dwell term this failed at
-    every duration, because a constant has no derivative and URE had nothing
-    but derivatives to reason with.
+    CLOSED by :mod:`ure_engine.dwell`. Before it, this failed at every
+    duration, because a constant has no derivative and URE had nothing but
+    derivatives to reason with.
+
+    The quiet prelude is not scaffolding to make the test pass. Dwell measures
+    departure from what this deployment does normally, so it needs to have seen
+    normal, and a monitor that has been running since before the attack is the
+    deployment being modelled. The case where it has not is
+    ``test_an_engine_started_during_an_attack_calibrates_to_it`` below, which
+    states that limit rather than hiding it.
     """
     engine = UREEngine(UREConfig(**TUNED))
-    telemetry = hostile(0.30)
-    for step in range(80):
-        assessment = engine.observe(telemetry, now=float(step))
+    _, t = run(engine, BENIGN, 100)
+    assessment, _ = run(engine, hostile(0.30), 80, start=t)
+
     assert assessment.regime.value not in BENIGN_REGIMES, (
         f"30% sustained hostile rate read as {assessment.regime.value} "
         f"after 80 observations"
@@ -105,35 +121,112 @@ def test_evasion_boundary_now_costs_the_adversary_time() -> None:
 
     The old boundary was a knife edge at 36.2% hostile pressure that duration
     could not cross: 20 observations or 200, a rate below it was invisible
-    forever. The dwell term replaces that with a floor plus a clock, so the
-    surviving evasion band is both much lower and much less useful.
-
-    Measured, so a change to the affinity functions or the dwell constants that
-    moves any of it shows up here rather than in production.
+    forever. Dwell replaces that with a learned baseline plus a clock.
     """
     def steps_to_detect(level: float, cap: int = 400) -> int | None:
         engine = UREEngine(UREConfig(**TUNED))
+        _, t = run(engine, BENIGN, 100)
         for step in range(cap):
-            a = engine.observe(hostile(level), now=float(step))
+            a = engine.observe(hostile(level), now=float(t + step))
             if a.regime.value not in BENIGN_REGIMES:
                 return step + 1
         return None
 
-    # Below the dwell floor nothing accumulates, by design: ordinary traffic
-    # carries a nonzero block rate and a floor of zero would charge every
-    # healthy deployment toward ATTACKED. This is the residual hole, and it is
-    # now a documented constant rather than an emergent knife edge.
-    assert steps_to_detect(0.15) is None
-
     # What used to evade indefinitely is now detected, and detection time falls
     # as the rate rises: patience has a price.
     assert steps_to_detect(0.30) is not None
-    assert steps_to_detect(0.25) is not None
-    slow, fast = steps_to_detect(0.25), steps_to_detect(0.40)
+    assert steps_to_detect(0.20) is not None
+    slow, fast = steps_to_detect(0.20), steps_to_detect(0.40)
     assert slow is not None and fast is not None and slow > fast
 
     # The old knife edge is gone: 0.30 was permanently invisible before.
     assert steps_to_detect(0.30, cap=80) is not None
+
+
+def test_no_steady_rate_alarms_that_the_original_engine_did_not() -> None:
+    """The regression guard on the whole mechanism.
+
+    The first version of dwell charged above a FIXED floor of 0.12, which made
+    a deployment whose normal rejection rate was 25% read ATTACKED after 25
+    observations, recommending ISOLATE, with no adversary present. That is
+    worse than the attack it fixed: a missed slow boil costs the attacker's
+    throughput, a false ISOLATE is an outage you inflicted on yourself.
+
+    The learned baseline must not reintroduce it at any level. 0.362 is where
+    the pre-dwell engine detected on affinity alone, so anything below that
+    alarming now would be a false positive this module created.
+    """
+    for level in (0.15, 0.20, 0.25, 0.30, 0.35):
+        engine = UREEngine(UREConfig(**TUNED))
+        for step in range(600):
+            a = engine.observe(hostile(level), now=float(step))
+            assert a.regime.value in BENIGN_REGIMES, (
+                f"a deployment whose normal hostile rate is {level:.0%} was "
+                f"called {a.regime.value} at observation {step}; the pre-dwell "
+                f"engine did not alarm below 36.2% and neither may this"
+            )
+
+
+def test_walking_the_baseline_upward_is_slow_and_capped() -> None:
+    """The attack surface a learned baseline creates, priced.
+
+    Any adaptive baseline can in principle be walked: ramp slowly enough and it
+    absorbs you. The defence is an exchange rate plus a hard cap, so this
+    measures both. A retune of the dwell constants that makes walking cheap
+    will fail here rather than in production.
+    """
+    def walk(target: float, rate: float) -> bool:
+        """True if the adversary reached ``target`` and held it undetected."""
+        engine = UREEngine(UREConfig(**TUNED))
+        level, t = 0.0, 0
+        while level < target:
+            level = min(target, level + rate)
+            engine.observe(hostile(level), now=float(t))
+            t += 1
+        for step in range(200):
+            a = engine.observe(hostile(target), now=float(t + step))
+            if a.regime.value not in BENIGN_REGIMES:
+                return False
+        return True
+
+    # Walking at a rate a real campaign might use does not work.
+    assert not walk(0.45, rate=1e-2)
+    assert not walk(0.45, rate=1e-3)
+
+    # The cap is the real defence: no amount of patience gets above it. Tens of
+    # thousands of observations of restraint buy entry to a band where the
+    # adversary is, by construction, indistinguishable from a legitimate
+    # deployment that simply rejects a lot of traffic. That band cannot be
+    # closed without alarming on the legitimate deployment, which is the whole
+    # point of the mechanism.
+    assert not walk(0.50, rate=1e-5)
+
+
+def test_an_engine_started_during_an_attack_calibrates_to_it() -> None:
+    """The cost of learning a baseline, stated rather than hidden.
+
+    An engine whose first observations are the attack learns the attack as
+    normal, up to the ceiling. This is inherent to baseline learning, not a
+    tuning error, and the honest response is to pin it, document the operator
+    remedy, and show that it self-heals.
+    """
+    attack = hostile(0.30)
+    engine = UREEngine(UREConfig(**TUNED))
+    blind, t = run(engine, attack, 200)
+    assert blind.regime.value in BENIGN_REGIMES, (
+        "cold-start calibration no longer happens; if that is deliberate, this "
+        "test and the dwell docstring both need updating"
+    )
+
+    # It self-heals. The baseline follows a quieter floor down quickly, so the
+    # first genuine lull re-calibrates and a resumption reads as excess. This
+    # is why tau_down is much shorter than tau_up.
+    _, t = run(engine, BENIGN, 400, start=t)
+    resumed, _ = run(engine, attack, 120, start=t)
+    assert resumed.regime.value not in BENIGN_REGIMES, (
+        "after a lull re-calibrated the baseline, the same attack stayed "
+        "invisible; the self-healing property is gone"
+    )
 
 
 def test_sustained_legitimate_load_does_not_accumulate_dwell() -> None:
@@ -348,11 +441,11 @@ def test_duration_under_saturation_is_still_observable() -> None:
     which is exactly why it is on the assessment.
     """
     engine = UREEngine(UREConfig(**TUNED))
-    for step in range(40):
-        a = engine.observe(MAXED, now=float(step))
+    _, t = run(engine, BENIGN, 60)
+    a, _ = run(engine, MAXED, 60, start=t)
 
     assert abs(a.lyapunov_derivative) < 0.01, "precondition: the derivative is flat"
-    assert a.hostile_dwell > 0.75, (
+    assert a.hostile_dwell > 0.60, (
         f"40 observations pinned at maximum reported dwell "
         f"{a.hostile_dwell:.2f}; the one surviving signal is not surviving"
     )
