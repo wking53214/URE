@@ -216,6 +216,28 @@ Requiring genuine proximity to collapse is what separates the two. This was
 caught by running `examples/incident_walkthrough.py` and watching a traffic
 surge get quarantined.
 
+**`dwell` is duration, not magnitude.** Everything else in the classifier
+describes a level or a rate of change, and both read nothing for a hostile rate
+that is simply held constant. Red-teaming measured the consequence: a sustained
+rate below 36.2% evaded detection at *any* duration, permanently. `dwell`
+(`ure_engine/dwell.py`) integrates time spent above a floor of hostile pressure
+and enters ATTACKED multiplicatively, which drops the evasion ceiling to about
+19.5% and makes detection time fall as the rate rises.
+
+Two restrictions keep it from becoming a false-positive generator:
+
+* It is computed over `max(threat, adversarial)` **only**. Legitimate load is
+  supposed to persist; a dwell term over operational pressure would turn every
+  busy afternoon into an incident.
+* The amplification fades out as hostile pressure approaches 1.0, because where
+  the level already says everything, duration adds nothing. Without that fade,
+  a genuine cascade classifies ATTACKED instead of CASCADING and the recovery
+  action drops from QUARANTINE to ISOLATE. `test_quarantine_governs_regardless_of_score`
+  caught it.
+
+`tests/test_adversarial.py` holds both the attack it closes and the false
+positive it must not cause.
+
 ### Reachability
 
 Every regime must be reachable somewhere in the state space, and UNKNOWN must
@@ -455,6 +477,7 @@ potency. Memory is O(capacity), not O(requests).
 | `telemetry.py` | raw signals → pressures; smoothing | no |
 | `lyapunov.py` | `V(x)`, `dV/dt`, time-to-threshold | no |
 | `trajectory.py` | velocity, acceleration, volatility, oscillation | no |
+| `dwell.py` | time spent under sustained hostile pressure | no |
 | `regimes.py` | soft classification, confidence, entropy | no |
 | `attack_memory.py` | AMX | telemetry only |
 | `vaccines.py` | BVE | telemetry only |

@@ -149,6 +149,30 @@ non-zero whenever the tool has anything at all to say, INFORMATIONAL blind
 spots included, so gating on it would fail every build for non-defects, and a
 gate that always fails gets switched off.
 
+### The one detector the gate filters
+
+`unmerged_branch` reports MAJOR when a branch carries commits not in the
+default branch. On a pull request that is the definition of a pull request, and
+the detector says so itself: it "has no visibility into GitHub pull-request
+state". Left blocking, it fails every PR by construction.
+
+The obvious move, `--no-branches`, is wrong. ghost_buster escalates a check
+that has not run to MAJOR after five consecutive skips, on the correct
+principle that a check which never runs is indistinguishable from one that ran
+clean. Suppressing the branch check therefore makes the gate fail on its own
+suppression a few runs later. CI hid this because the ledger does not survive a
+fresh checkout; it reproduces immediately on a developer machine.
+
+So the check runs and the gate filters the detector. It also follows
+`attributes.source_detector`, because the ledger reports a finding that was
+fixed and came back one severity step higher, and a branch legitimately has
+unmerged commits, then does not once it merges, then does again on the next
+branch. That oscillation is the normal shape of development, and it arrived as
+a CRITICAL `regressed_finding` the first time a second branch was pushed.
+
+This is the only exemption. Every entry in `EXEMPT_DETECTORS` is a hole, which
+is why the set is kept to one.
+
 ### What the gate does not catch
 
 Measured, not assumed. `--mutate` selects tests "shaped like they check

@@ -43,6 +43,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from .assessment import GovernanceDecision, UREAssessment
 from .attack_memory import AttackMemoryExchange, MemoryRecall
+from .dwell import HostileDwell
 from .lyapunov import ENERGY_MAX, LyapunovTrajectoryEngine, energy_contributions
 from .recovery import RecoveryPlanner, RecoveryVector
 from .regimes import RegimeClassifier, RegimeProfile, SystemRegime
@@ -134,6 +135,7 @@ class UREEngine:
         "_bve",
         "_classifier",
         "_config",
+        "_dwell",
         "_last",
         "_lock",
         "_lyapunov",
@@ -167,6 +169,7 @@ class UREEngine:
         )
         self._trajectory = TrajectoryEngine(window=self._config.history_window)
         self._classifier = RegimeClassifier(energy_max=ENERGY_MAX)
+        self._dwell = HostileDwell()
         self._amx = attack_memory or AttackMemoryExchange(
             capacity=self._config.amx_capacity, half_life=self._config.amx_half_life
         )
@@ -249,6 +252,11 @@ class UREEngine:
             # 5. Trajectory.
             motion = self._trajectory.update(timestamp, energy, state)
 
+            # 5b. Hostile dwell. Updated after the learned pressure has been
+            #     folded into the state, so a signature AMX recognises counts
+            #     toward exposure the same way a directly observed one does.
+            dwell = self._dwell.update(state, timestamp)
+
             # 6. Regime classification.
             profile = self._classifier.classify(
                 state,
@@ -256,6 +264,7 @@ class UREEngine:
                 derivative,
                 volatility=motion.volatility,
                 recall_strength=max(recall.strength, immunization.best_match),
+                dwell=dwell,
             )
 
             # 7. Resilience index.
@@ -320,6 +329,7 @@ class UREEngine:
                 recommended_threshold=threshold.threshold,
                 decision=GovernanceDecision.from_recovery(vector.action),
                 time_to_saturation=self._lyapunov.time_to_threshold(ENERGY_MAX * 0.95),
+                hostile_dwell=dwell,
             )
             self._last = assessment
             return assessment
@@ -339,8 +349,9 @@ class UREEngine:
             energy = self._lyapunov.observe(state)
             derivative = self._lyapunov.derivative
             motion = self._trajectory.update(timestamp, energy, state)
+            dwell = self._dwell.update(state, timestamp)
             profile = self._classifier.classify(
-                state, energy, derivative, volatility=motion.volatility
+                state, energy, derivative, volatility=motion.volatility, dwell=dwell
             )
             breakdown = self._resilience.compute(
                 energy=energy,
@@ -393,6 +404,7 @@ class UREEngine:
                 recommended_threshold=threshold.threshold,
                 decision=GovernanceDecision.from_recovery(vector.action),
                 time_to_saturation=self._lyapunov.time_to_threshold(ENERGY_MAX * 0.95),
+                hostile_dwell=dwell,
             )
             self._last = assessment
             return assessment
@@ -560,6 +572,7 @@ class UREEngine:
             self._lyapunov.reset()
             self._trajectory.reset()
             self._planner.reset()
+            self._dwell.reset()
             self._thresholds.reset()
             if isinstance(self._telemetry, SmoothingAdapter):
                 self._telemetry.reset()

@@ -66,6 +66,15 @@ So the check RUNS, and this gate filters the single detector whose MAJOR is
 structurally meaningless here. The blind spot never accrues, and the false
 positive never blocks.
 
+The filter also has to follow derived findings. ghost_buster's ledger watches
+for a finding that was fixed and came back and reports it one severity step
+higher, which is right in general and wrong for this one: a branch legitimately
+has unmerged commits, then does not once it merges, then does again on the next
+branch. That oscillation is the normal shape of development, and the ledger
+reports it as a CRITICAL regression. Derived findings name their origin in
+``attributes.source_detector``, so the filter follows that link rather than
+matching on the summary text, which would break the moment the wording changed.
+
 Usage
 -----
 ::
@@ -89,6 +98,21 @@ BLOCKING: frozenset[str] = frozenset({"major", "critical"})
 #: deliberately tiny: every entry is a hole, and each one is justified in
 #: docs/AUDIT.md.
 EXEMPT_DETECTORS: frozenset[str] = frozenset({"unmerged_branch"})
+
+
+def is_exempt(finding: dict[str, object]) -> bool:
+    """True when this finding, or the finding it derives from, is exempt.
+
+    Checking only ``detector`` would miss the ledger's ``regressed_finding``,
+    which carries its own detector name and points at the original through
+    ``attributes.source_detector``.
+    """
+    if str(finding.get("detector", "")) in EXEMPT_DETECTORS:
+        return True
+    attributes = finding.get("attributes")
+    if isinstance(attributes, dict):
+        return str(attributes.get("source_detector", "")) in EXEMPT_DETECTORS
+    return False
 
 
 def run_scan(
@@ -138,11 +162,10 @@ def run_scan(
 
 def report(findings: list[dict[str, object]]) -> int:
     """Print a summary and return the process exit code."""
-    counts = Counter(str(f.get("severity", "unknown")) for f in findings)
+    counts = Counter(str(finding.get("severity", "unknown")) for finding in findings)
     blocking = [
-        f for f in findings
-        if str(f.get("severity", "")) in BLOCKING
-        and str(f.get("detector", "")) not in EXEMPT_DETECTORS
+        finding for finding in findings
+        if str(finding.get("severity", "")) in BLOCKING and not is_exempt(finding)
     ]
 
     summary = ", ".join(f"{n} {sev}" for sev, n in sorted(counts.items())) or "none"

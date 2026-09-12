@@ -12,18 +12,27 @@ URE's defences are themselves attack surface, and several are inviting:
 * hysteresis HOLDS a degraded state for ``restore_patience`` observations
 * AMX evicts weakest-first at capacity
 * BVE synthesises vaccines from observed patterns, then fires on them
-* energy saturates at ENERGY_MAX, destroying trajectory information
+* every pressure clamps at 1.0, destroying magnitude above full scale
 
 Each is a deliberate design choice. Each is also a lever.
 
 HOW THE KNOWN WEAKNESSES ARE ENCODED
 ------------------------------------
-Four of these six attacks currently succeed. They are marked
+Two of these attacks still succeed: A4 (AMX decoy flooding) and A5b (flushing
+benign evidence out of BVE's observation window). A1 is closed by
+:mod:`ure_engine.dwell`. A6 turned out to be an architectural limit rather than
+a defect, and is pinned as one below with a corrected diagnosis.
+
+The ones that still succeed are marked
 ``xfail(strict=True)`` rather than deleted or softened, which means:
 
 * the suite stays green while the weakness is known and accepted;
 * the moment someone fixes one, the test XPASSes, ``strict=True`` turns that
   into a failure, and the fixer is forced to come here and flip the marker.
+
+That is not hypothetical: it is how A1 came to be un-marked. The fix XPASSed
+the test, strict mode failed the build, and the marker had to be removed
+deliberately rather than drifting.
 
 A known hole that silently reopens is worse than one nobody wrote down, and an
 "expected failure" that quietly starts passing teaches nobody anything. This is
@@ -74,15 +83,13 @@ MAXED = {"risk_score": 1.0, "blocked_rate": 1.0, "retry_rate": 1.0,
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="KNOWN WEAKNESS: a constant hostile rate has no derivative, so "
-           "URE's trajectory machinery cannot see it. An adversary holding "
-           "below the affinity boundary is invisible for any duration. Fix "
-           "requires a duration-based floor, not a slope.",
-)
 def test_sustained_hostile_rate_is_eventually_detected() -> None:
-    """A patient adversary at a constant rate should not evade forever."""
+    """A patient adversary at a constant rate should not evade forever.
+
+    CLOSED by :mod:`ure_engine.dwell`. Before the dwell term this failed at
+    every duration, because a constant has no derivative and URE had nothing
+    but derivatives to reason with.
+    """
     engine = UREEngine(UREConfig(**TUNED))
     telemetry = hostile(0.30)
     for step in range(80):
@@ -93,23 +100,62 @@ def test_sustained_hostile_rate_is_eventually_detected() -> None:
     )
 
 
-def test_evasion_boundary_is_sharp_and_time_independent() -> None:
-    """Characterises the weakness above: the boundary is a level, not a duration.
+def test_evasion_boundary_now_costs_the_adversary_time() -> None:
+    """Characterises what the fix bought, in the adversary's own currency.
 
-    Not an aspiration. This documents measured behaviour so a change to the
-    affinity functions that moves the boundary shows up as a failure here.
+    The old boundary was a knife edge at 36.2% hostile pressure that duration
+    could not cross: 20 observations or 200, a rate below it was invisible
+    forever. The dwell term replaces that with a floor plus a clock, so the
+    surviving evasion band is both much lower and much less useful.
+
+    Measured, so a change to the affinity functions or the dwell constants that
+    moves any of it shows up here rather than in production.
     """
-    def detected(level: float, steps: int) -> bool:
+    def steps_to_detect(level: float, cap: int = 400) -> int | None:
         engine = UREEngine(UREConfig(**TUNED))
-        for step in range(steps):
+        for step in range(cap):
             a = engine.observe(hostile(level), now=float(step))
-        return a.regime.value not in BENIGN_REGIMES
+            if a.regime.value not in BENIGN_REGIMES:
+                return step + 1
+        return None
 
-    # Below the boundary, duration does not help: 20 steps or 200, still blind.
-    assert not detected(0.30, 20)
-    assert not detected(0.30, 200)
-    # Above it, detection is immediate rather than gradual.
-    assert detected(0.60, 20)
+    # Below the dwell floor nothing accumulates, by design: ordinary traffic
+    # carries a nonzero block rate and a floor of zero would charge every
+    # healthy deployment toward ATTACKED. This is the residual hole, and it is
+    # now a documented constant rather than an emergent knife edge.
+    assert steps_to_detect(0.15) is None
+
+    # What used to evade indefinitely is now detected, and detection time falls
+    # as the rate rises: patience has a price.
+    assert steps_to_detect(0.30) is not None
+    assert steps_to_detect(0.25) is not None
+    slow, fast = steps_to_detect(0.25), steps_to_detect(0.40)
+    assert slow is not None and fast is not None and slow > fast
+
+    # The old knife edge is gone: 0.30 was permanently invisible before.
+    assert steps_to_detect(0.30, cap=80) is not None
+
+
+def test_sustained_legitimate_load_does_not_accumulate_dwell() -> None:
+    """The false positive the dwell term would cause if it were careless.
+
+    Duration is dangerous evidence. Every real system spends long stretches
+    under sustained load, and a dwell term over operational pressure would turn
+    every busy afternoon into an incident. This pins the restriction that makes
+    the mechanism safe: only hostile pressure charges it.
+    """
+    heavy = {"risk_score": 0.0, "blocked_rate": 0.0, "retry_rate": 0.45,
+             "latency_ms": 850.0, "queue_saturation": 0.80,
+             "substrate_health": 0.75}
+    engine = UREEngine(UREConfig(**TUNED))
+    for step in range(200):
+        a = engine.observe(heavy, now=float(step))
+
+    assert a.hostile_dwell == 0.0, (
+        f"200 observations of heavy but honest load charged dwell to "
+        f"{a.hostile_dwell:.3f}"
+    )
+    assert a.regime is not SystemRegime.ATTACKED
 
 
 # ---------------------------------------------------------------------------
@@ -262,33 +308,53 @@ def test_benign_evidence_cannot_be_flushed_out_of_the_window() -> None:
 # ---------------------------------------------------------------------------
 # A6. Saturation blinding (BLINDING)
 # ---------------------------------------------------------------------------
+#
+# CORRECTED DIAGNOSIS. The original finding blamed energy saturating at
+# ENERGY_MAX, and proposed a renormalising term as the fix. That was wrong, and
+# the test below proves it: the two telemetry frames produce byte-identical
+# pressure vectors. A 10x latency increase and a 10x adversarial-event
+# increase are destroyed at NORMALIZATION, before the Lyapunov function is ever
+# evaluated. No change to the energy function, and no duration floor, can
+# recover information that was discarded one stage earlier.
+#
+# Fixing it properly would mean unbounded pressures, and bounded pressures are
+# what make V(x) a Lyapunov function at all. So this is an architectural limit,
+# not a defect, and the honest thing is to pin it as one and say what an
+# operator should watch instead.
+# ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="KNOWN WEAKNESS: energy is bounded at ENERGY_MAX, so once pinned "
-           "there is no headroom left for a derivative and further escalation "
-           "is invisible. Same root cause as the slow boil: a constant "
-           "defeats a trajectory. Fix requires an unbounded or renormalising "
-           "term, or a duration-based floor.",
-)
-def test_further_escalation_is_visible_even_at_saturation() -> None:
-    """A system already at maximum energy must still notice it is getting worse."""
+def test_escalation_beyond_full_scale_is_invisible_by_construction() -> None:
+    """Pins the real mechanism, so nobody re-diagnoses it as an energy bug."""
+    from ure_engine.telemetry import TelemetryAdapter, TelemetryFrame
+
+    adapter = TelemetryAdapter()
+    worse = dict(MAXED, latency_ms=50_000.0, adversarial_events=500.0)
+    at_max = adapter.to_state_vector(TelemetryFrame(**MAXED), 0.0)
+    escalated = adapter.to_state_vector(TelemetryFrame(**worse), 0.0)
+
+    assert at_max.to_dict() == escalated.to_dict(), (
+        "pressures no longer clamp identically; the saturation limit has "
+        "moved and the reasoning in this module needs revisiting"
+    )
+
+
+def test_duration_under_saturation_is_still_observable() -> None:
+    """What URE can still tell an operator once magnitude has run out.
+
+    Every quantity that describes motion goes flat at saturation: energy pins,
+    the derivative decays to zero, volatility collapses. Dwell does not, because
+    it integrates rather than differentiates. It is the last signal standing,
+    which is exactly why it is on the assessment.
+    """
     engine = UREEngine(UREConfig(**TUNED))
-    t = 0
-    for _ in range(30):
-        engine.observe(MAXED, now=float(t))
-        t += 1
+    for step in range(40):
+        a = engine.observe(MAXED, now=float(step))
 
-    worse = dict(MAXED, latency_ms=50_000.0, adversarial_events=500.0,
-                 queue_saturation=1.0)
-    for _ in range(10):
-        a = engine.observe(worse, now=float(t))
-        t += 1
-
-    assert abs(a.lyapunov_derivative) > 0.01, (
-        f"a large further escalation moved dV/dt only to "
-        f"{a.lyapunov_derivative:+.5f}"
+    assert abs(a.lyapunov_derivative) < 0.01, "precondition: the derivative is flat"
+    assert a.hostile_dwell > 0.75, (
+        f"40 observations pinned at maximum reported dwell "
+        f"{a.hostile_dwell:.2f}; the one surviving signal is not surviving"
     )
 
 
