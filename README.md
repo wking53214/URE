@@ -319,6 +319,7 @@ the engine from accumulating superstitions.
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | The full design, decision by decision |
 | [`docs/PROVENANCE.md`](docs/PROVENANCE.md) | Source-by-source lineage, with evidence classes |
 | [`docs/AUDIT.md`](docs/AUDIT.md) | ghost_buster integrity scan: 0 MAJOR, 0 surviving mutants, and what is baselined |
+| [`docs/INTEGRATION_SENTINEL.md`](docs/INTEGRATION_SENTINEL.md) | Proposal for wiring URE to sentinel_os: adapter, tuned constants, staged rollout, red-team caveats |
 
 ---
 

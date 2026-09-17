@@ -116,6 +116,11 @@ class UREAssessment:
     decision: GovernanceDecision = GovernanceDecision.ALLOW
     #: Seconds until energy reaches saturation on the current trajectory.
     time_to_saturation: float | None = None
+    #: How long hostile pressure has been sustained, on [0, 1]. The one signal
+    #: that still moves once every pressure has clamped at 1.0 and energy,
+    #: derivative and volatility have all gone flat, so an integrator watching
+    #: for "this is getting worse" at saturation should watch this.
+    hostile_dwell: float = 0.0
     #: Engine schema version, so replayed records identify their producer.
     schema_version: str = "2.0"
 
@@ -159,6 +164,7 @@ class UREAssessment:
             "regime": self.regime.value,
             "regime_confidence": round(self.regime_confidence, 4),
             "regime_entropy": round(self.regime_entropy, 4),
+            "hostile_dwell": round(self.hostile_dwell, 4),
             "lyapunov": {
                 "energy": round(self.lyapunov_energy, 4),
                 "derivative": round(self.lyapunov_derivative, 6),

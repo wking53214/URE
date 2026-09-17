@@ -30,6 +30,16 @@ the distribution seriously. That buys three things the cascade could not give:
 3. **Explanation.** The runner-up regime and the margin between them are what
    an operator actually wants to see at a boundary.
 
+Duration as evidence
+--------------------
+Energy, derivative, volatility and acceleration are all statements about
+*motion*, and all of them read zero for a quantity held constant. That is the
+hole a patient adversary uses: sit at a hostile rate below the affinity
+boundary and there is no level to trip and no slope to measure. The ``dwell``
+input closes it by supplying the one thing none of the others carry, how long
+the hostile pressure has been elevated. See :mod:`ure_engine.dwell` for why it
+is restricted to hostile pressure and must not be extended to operational load.
+
 The predecessor's calibration bands are preserved as the anchor points the
 affinity functions are fitted to, and its reachability sweep is carried forward
 as a test: every regime must be reachable somewhere in the state space, and
@@ -248,6 +258,7 @@ class RegimeClassifier:
         derivative: float,
         volatility: float = 0.0,
         recall_strength: float = 0.0,
+        dwell: float = 0.0,
     ) -> dict[SystemRegime, float]:
         """Unnormalized evidence for each candidate regime.
 
@@ -256,12 +267,21 @@ class RegimeClassifier:
         architecture requires: it sharpens ATTACKED without being able to
         manufacture it from nothing, because it enters multiplicatively
         alongside observed hostile pressure rather than as a standalone term.
+
+        ``dwell`` is the same kind of input from the other direction: how long
+        hostile pressure has been elevated, supplied by
+        :class:`~ure_engine.dwell.HostileDwell`. It exists because every other
+        input here describes a level or a rate of change, and an adversary
+        holding a constant defeats both. Like ``recall`` it is multiplicative
+        and cannot fabricate a regime: with no hostile pressure the ATTACKED
+        term is zero and no amount of dwell lifts it.
         """
         normalized_energy = clamp(energy / self._energy_max)
         rising = clamp(derivative / _TREND_SCALE)
         falling = clamp(-derivative / _TREND_SCALE)
         erratic = clamp(volatility / _VOLATILITY_SCALE)
         recall = clamp(recall_strength)
+        exposure = clamp(dwell)
 
         hostile = max(state.threat_pressure, state.adversarial_pressure)
         operational = max(
@@ -271,7 +291,15 @@ class RegimeClassifier:
 
         return {
             # Quiet and low. Cubed so it collapses quickly once energy lifts.
-            SystemRegime.NOMINAL: ((1.0 - normalized_energy) ** 3) * (1.0 - erratic),
+            # Quiet and low -- but only if it has also been quiet. The dwell
+            # term is what stops a patient adversary from sitting at a low
+            # constant rate and being called NOMINAL forever. Damped to 0.9 so
+            # NOMINAL can never be driven to exactly zero: a distribution with
+            # no support at all is reported as UNKNOWN, and "I cannot classify
+            # this" is the wrong answer to "somebody has been probing you".
+            SystemRegime.NOMINAL: (
+                ((1.0 - normalized_energy) ** 3) * (1.0 - erratic) * (1.0 - 0.9 * exposure)
+            ),
             # Mid-band, in motion, nothing specific wrong.
             SystemRegime.ADAPTING: (
                 _bump(normalized_energy, _ADAPTING_CENTRE, _ADAPTING_WIDTH)
@@ -291,7 +319,18 @@ class RegimeClassifier:
             # Malice. Suppressed while energy is actively dissipating, since a
             # receding attack is a recovery.
             SystemRegime.ATTACKED: (
-                (hostile ** 1.5) * (0.40 + 0.60 * (1.0 - falling)) * (1.0 + 0.5 * recall) * 1.6
+                (hostile ** 1.5)
+                * (0.40 + 0.60 * (1.0 - falling))
+                * (1.0 + 0.5 * recall)
+                # Faded out by hostile pressure itself. Dwell exists to
+                # supply what the level cannot, and at hostile pressure near
+                # 1.0 the level already says everything -- amplifying there
+                # only inflates ATTACKED past CASCADING on a genuine cascade,
+                # which downgrades the recovery action from QUARANTINE to
+                # ISOLATE at exactly the wrong moment. Measured, not assumed:
+                # test_quarantine_governs_regardless_of_score caught it.
+                * (1.0 + 2.0 * exposure * (1.0 - hostile))
+                * 1.6
             ),
             # Failures inducing failures: near saturation, rising, and broadly
             # breaking. The energy term is gated at _CASCADE_FLOOR rather than
@@ -316,6 +355,7 @@ class RegimeClassifier:
         derivative: float,
         volatility: float = 0.0,
         recall_strength: float = 0.0,
+        dwell: float = 0.0,
     ) -> RegimeProfile:
         """Classify the current regime and report the full distribution."""
         # Guard non-finite inputs before they reach the affinity functions.
@@ -331,7 +371,9 @@ class RegimeClassifier:
         ):
             return RegimeProfile.unknown()
 
-        scores = self.affinities(state, energy, derivative, volatility, recall_strength)
+        scores = self.affinities(
+            state, energy, derivative, volatility, recall_strength, dwell
+        )
         total = sum(scores.values())
 
         if not math.isfinite(total) or total <= 1e-9:

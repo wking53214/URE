@@ -46,12 +46,34 @@ So this gate raises the floor; it does not prove the suite is sound. Treat a
 green gate as "no new finding of a kind ghost_buster looks for", never as "the
 tests are load-bearing".
 
-Why ``--no-branches``
----------------------
+Why ``unmerged_branch`` is filtered rather than the check disabled
+-----------------------------------------------------------------
 The ``unmerged_branch`` detector reports MAJOR when a branch has commits not in
 the default branch. On a pull request that is the definition of a pull request,
 not a defect, and the detector says so itself: it "has no visibility into
-GitHub pull-request state". Leaving it on would fail every PR by construction.
+GitHub pull-request state". Left blocking, it would fail every PR by
+construction.
+
+The obvious move is ``--no-branches``, and it is wrong. ghost_buster tracks
+checks that never run and escalates them to MAJOR after five consecutive
+skips, on the correct principle that a check which never runs is
+indistinguishable from one that ran and found nothing. So suppressing the
+branch check makes the gate fail on its own suppression a few runs later: a
+self-defeating loop, invisible in CI only because the ledger does not persist
+across fresh checkouts, and reproducible immediately on a developer machine.
+
+So the check RUNS, and this gate filters the single detector whose MAJOR is
+structurally meaningless here. The blind spot never accrues, and the false
+positive never blocks.
+
+The filter also has to follow derived findings. ghost_buster's ledger watches
+for a finding that was fixed and came back and reports it one severity step
+higher, which is right in general and wrong for this one: a branch legitimately
+has unmerged commits, then does not once it merges, then does again on the next
+branch. That oscillation is the normal shape of development, and the ledger
+reports it as a CRITICAL regression. Derived findings name their origin in
+``attributes.source_detector``, so the filter follows that link rather than
+matching on the summary text, which would break the moment the wording changed.
 
 Usage
 -----
@@ -72,6 +94,26 @@ from collections import Counter
 #: Severities that fail the build. Everything else is reported only.
 BLOCKING: frozenset[str] = frozenset({"major", "critical"})
 
+#: Detectors whose findings are structurally meaningless for this gate. Kept
+#: deliberately tiny: every entry is a hole, and each one is justified in
+#: docs/AUDIT.md.
+EXEMPT_DETECTORS: frozenset[str] = frozenset({"unmerged_branch"})
+
+
+def is_exempt(finding: dict[str, object]) -> bool:
+    """True when this finding, or the finding it derives from, is exempt.
+
+    Checking only ``detector`` would miss the ledger's ``regressed_finding``,
+    which carries its own detector name and points at the original through
+    ``attributes.source_detector``.
+    """
+    if str(finding.get("detector", "")) in EXEMPT_DETECTORS:
+        return True
+    attributes = finding.get("attributes")
+    if isinstance(attributes, dict):
+        return str(attributes.get("source_detector", "")) in EXEMPT_DETECTORS
+    return False
+
 
 def run_scan(
     path: str, secrets_binary: str | None, mutate: bool, mutate_timeout: int
@@ -85,7 +127,6 @@ def run_scan(
         "ghost-buster",
         path,
         "--trust",  # consent to executing this repository's own test suite
-        "--no-branches",  # see module docstring
         "--json",
     ]
     if secrets_binary:
@@ -121,8 +162,11 @@ def run_scan(
 
 def report(findings: list[dict[str, object]]) -> int:
     """Print a summary and return the process exit code."""
-    counts = Counter(str(f.get("severity", "unknown")) for f in findings)
-    blocking = [f for f in findings if str(f.get("severity", "")) in BLOCKING]
+    counts = Counter(str(finding.get("severity", "unknown")) for finding in findings)
+    blocking = [
+        finding for finding in findings
+        if str(finding.get("severity", "")) in BLOCKING and not is_exempt(finding)
+    ]
 
     summary = ", ".join(f"{n} {sev}" for sev, n in sorted(counts.items())) or "none"
     print(f"integrity gate: {len(findings)} finding(s) beyond baseline ({summary})")

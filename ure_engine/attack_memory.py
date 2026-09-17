@@ -82,6 +82,31 @@ DEFAULT_HALF_LIFE: float = 6 * 60 * 60.0
 #: Profiles below this effective severity are eligible for eviction.
 FORGET_THRESHOLD: float = 0.01
 
+#: Half-life of the new-signature admission counter, in seconds. Sets what
+#: counts as "arriving in a crowd" for the purposes of eviction ranking.
+ADMISSION_HALF_LIFE: float = 60.0
+
+#: Recent distinct new signatures at which admission is treated as a full
+#: flood. A deployment discovering a new signature every few minutes sits near
+#: zero; one discovering several a second saturates it.
+BURST_SIGNATURES: float = 20.0
+
+#: Fraction of capacity reserved for signatures seen only once. Uncorroborated
+#: profiles compete only for this share, which is what makes a flood of minted
+#: signatures structurally unable to displace established memory rather than
+#: merely unlikely to. See :meth:`AttackMemoryExchange._evict_if_needed`.
+PROBATION_FRACTION: float = 0.25
+
+#: Persistence, in seconds, at which recurrence counts as half its maximum
+#: evidence. Recurring across five minutes is materially stronger than
+#: recurring across one second, and elapsed time is the one thing an adversary
+#: cannot mint: they can claim any severity they like, but they cannot claim to
+#: have been here longer than they have.
+
+#: Window over which a full memory being replaced counts as a flood.
+FLOOD_WINDOW: float = 300.0
+PERSISTENCE_SCALE: float = 300.0
+
 
 @dataclass(frozen=True, slots=True)
 class AttackProfile:
@@ -104,6 +129,9 @@ class AttackProfile:
     first_seen: float
     #: Free-form labels supplied by the integrator (campaign id, source ASN).
     tags: frozenset[str] = field(default_factory=frozenset)
+    #: How crowded this signature's first sighting was, in [0, 1]. See
+    #: :attr:`corroboration`.
+    admission_burst: float = 0.0
 
     def effective_severity(self, now: float, half_life: float = DEFAULT_HALF_LIFE) -> float:
         """Severity discounted for time since ``last_seen``.
@@ -120,6 +148,50 @@ class AttackProfile:
     def persistence(self) -> float:
         """How long this signature has been recurring, in seconds."""
         return max(0.0, self.last_seen - self.first_seen)
+
+    @property
+    def corroboration(self) -> float:
+        """How much independent evidence stands behind this profile, in [0, 1].
+
+        This exists because **severity is attacker-supplied and corroboration
+        is not**. ``remember`` takes the severity its caller reports, and an
+        adversary minting signatures reports whatever they like. Ranking
+        eviction on severity alone therefore lets anyone who can claim 0.99
+        evict a real profile sitting at 0.95, which is exactly the flooding
+        attack in ``tests/test_adversarial.py``.
+
+        Recurrence cannot be claimed, only spent. A campaign has been seen
+        repeatedly across a span of time, which costs the adversary both
+        patience and repeated exposure, so it ranks above anything asserted
+        once.
+
+        The hard case is a genuine first sighting, which carries no more
+        evidence than a decoy does. The one thing that separates them is the
+        company it arrived in: a signature admitted while hundreds of others
+        are streaming in is far more likely to be part of the flood than one
+        admitted during quiet. That is a probabilistic discount, not proof, so
+        it is weighted rather than absolute, and it is not what actually stops
+        the flood. The capacity partition in ``_evict_if_needed`` does that.
+
+        Both components saturate rather than step, so there is no boundary for
+        an adversary to sit exactly on top of.
+        """
+        if self.frequency < 2:
+            return 0.25 * (1.0 - clamp(self.admission_burst))
+        repeats = 1.0 - math.exp(-(self.frequency - 1) / 3.0)
+        span = self.persistence / (self.persistence + PERSISTENCE_SCALE)
+        return clamp(0.30 + 0.35 * repeats + 0.35 * span)
+
+    def retention(self, now: float, half_life: float = DEFAULT_HALF_LIFE) -> float:
+        """Eviction rank: what this profile is worth keeping. Lowest goes first.
+
+        Corroboration dominates and severity only orders within a band of it.
+        That split is the whole point: severity is a number the caller supplied
+        and an adversary supplies whatever wins, so letting it decide rank hands
+        them the memory for the price of claiming 0.99. Evidence that costs
+        elapsed time cannot be supplied, only spent.
+        """
+        return self.corroboration + 0.15 * self.effective_severity(now, half_life)
 
     @property
     def is_campaign(self) -> bool:
@@ -139,6 +211,7 @@ class AttackProfile:
             "last_seen": self.last_seen,
             "first_seen": self.first_seen,
             "is_campaign": self.is_campaign,
+            "admission_burst": round(self.admission_burst, 4),
             "tags": sorted(self.tags),
         }
 
@@ -179,12 +252,23 @@ class AttackMemoryExchange:
     not move user data.
     """
 
-    __slots__ = ("_capacity", "_half_life", "_lock", "_profiles")
+    __slots__ = (
+        "_admissions",
+        "_capacity",
+        "_half_life",
+        "_last_admission",
+        "_lock",
+        "_profiles",
+    )
 
     def __init__(self, capacity: int = 4096, half_life: float = DEFAULT_HALF_LIFE) -> None:
         if capacity < 1:
             raise ValueError("capacity must be at least 1")
         self._capacity = capacity
+        # Decaying count of recent first sightings, used to tell a signature
+        # that arrived alone from one that arrived in a flood.
+        self._admissions = 0.0
+        self._last_admission: float | None = None
         self._half_life = half_life
         self._profiles: dict[str, AttackProfile] = {}
         self._lock = threading.RLock()
@@ -220,6 +304,7 @@ class AttackMemoryExchange:
                     last_seen=timestamp,
                     first_seen=timestamp,
                     tags=frozenset(tags),
+                    admission_burst=self._note_admission(timestamp),
                 )
             else:
                 decayed = existing.effective_severity(timestamp, self._half_life)
@@ -264,16 +349,67 @@ class AttackMemoryExchange:
         with self._lock:
             self._profiles.clear()
 
+    def _note_admission(self, now: float) -> float:
+        """Register a first sighting and report how crowded it was.
+
+        Returns the burst level *before* counting this one, so the very first
+        signature a deployment ever sees is never treated as part of a flood.
+        Caller holds the lock.
+        """
+        previous = self._last_admission
+        self._last_admission = now
+        if previous is not None:
+            elapsed = max(0.0, now - previous)
+            self._admissions *= math.pow(0.5, elapsed / ADMISSION_HALF_LIFE)
+        burst = clamp(self._admissions / BURST_SIGNATURES)
+        self._admissions += 1.0
+        return burst
+
     def _evict_if_needed(self, now: float) -> None:
-        """Evict the weakest profiles when over capacity. Caller holds the lock."""
+        """Make room, taking it from the least corroborated memory first.
+
+        Ranking on severity alone is what made the flooding attack work:
+        severity is whatever the caller reported, so an adversary minting
+        signatures at 0.99 evicted a real profile sitting at 0.95, and the
+        memory forgot the one thing it most needed to remember. Ranking on
+        :meth:`AttackProfile.retention` fixes the ordering, but ordering alone
+        is a soft defence: an adversary who out-claims the incumbent by a
+        hair still wins.
+
+        So capacity is partitioned rather than merely ranked. Signatures seen
+        exactly once compete only for ``PROBATION_FRACTION`` of the memory,
+        and a flood of them can therefore evict nothing but each other, at any
+        volume and any claimed severity. Established profiles are touched only
+        when the established region is itself full, which no amount of minting
+        can cause.
+
+        Probation may borrow whatever the established region is not using, so
+        a quiet deployment still gets the whole memory. Caller holds the lock.
+        """
         if len(self._profiles) <= self._capacity:
             return
-        ranked = sorted(
-            self._profiles.values(),
-            key=lambda p: p.effective_severity(now, self._half_life),
+
+        def weakest_first(profiles: list[AttackProfile]) -> list[AttackProfile]:
+            return sorted(profiles, key=lambda p: p.retention(now, self._half_life))
+
+        established = [p for p in self._profiles.values() if p.frequency >= 2]
+        probation = [p for p in self._profiles.values() if p.frequency < 2]
+
+        # Probation gets its reserved share, plus anything established is not
+        # using. It never gets to push established out.
+        allowance = max(
+            int(self._capacity * PROBATION_FRACTION),
+            self._capacity - len(established),
         )
-        for profile in ranked[: len(self._profiles) - self._capacity]:
+        for profile in weakest_first(probation)[: max(0, len(probation) - allowance)]:
             self._profiles.pop(profile.signature, None)
+
+        # Only if the established region has genuinely outgrown the memory on
+        # its own does corroborated history start being dropped.
+        overflow = len(self._profiles) - self._capacity
+        if overflow > 0:
+            for profile in weakest_first(established)[:overflow]:
+                self._profiles.pop(profile.signature, None)
 
     # -- read -------------------------------------------------------------
 
@@ -360,6 +496,36 @@ class AttackMemoryExchange:
         # Damped: ambient history should colour the assessment, not dominate it.
         return clamp((1.0 - union) * 0.5)
 
+    def flood_pressure(self, now: float | None = None) -> float:
+        """Evidence that the memory itself is under a replacement attack.
+
+        An adversary who can afford corroborated decoys cannot be stopped by
+        eviction ranking: they will match whatever evidence shape the incumbent
+        has and out-claim its severity by a hair. What they cannot do is hide.
+        Displacing a full memory means minting capacity-many signatures and
+        making each recur, which is thousands of adverse events in minutes.
+
+        So this reports the one structural fact that follows: a memory that is
+        **full** and mostly **new** has just been replaced. Both conditions
+        matter. A deployment still filling its memory is trivially all-new and
+        must not read as flooded, which is why capacity is checked first, and a
+        full memory in steady state turns over slowly by definition.
+
+        Scale-free on purpose. It is a fraction of this deployment's own
+        memory, not a rate threshold, so it makes no claim about how many
+        signatures per minute is normal anywhere.
+        """
+        timestamp = time.time() if now is None else now
+        with self._lock:
+            total = len(self._profiles)
+            if total < self._capacity:
+                return 0.0
+            cutoff = timestamp - FLOOD_WINDOW
+            recent = sum(1 for p in self._profiles.values() if p.first_seen >= cutoff)
+        # Ramps in over the upper half: half a memory replaced in five minutes
+        # is where this stops being explicable as ordinary discovery.
+        return clamp((recent / total - 0.5) / 0.5)
+
     # -- introspection and exchange ---------------------------------------
 
     def __len__(self) -> int:
@@ -410,6 +576,7 @@ class AttackMemoryExchange:
                     last_seen=_as_float(record.get("last_seen")),
                     first_seen=_as_float(record.get("first_seen")),
                     tags=frozenset(str(t) for t in _as_tags(record.get("tags"))),
+                    admission_burst=clamp(_as_float(record.get("admission_burst"))),
                 )
                 existing = self._profiles.get(signature)
                 if existing is None:

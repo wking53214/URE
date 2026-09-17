@@ -43,6 +43,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from .assessment import GovernanceDecision, UREAssessment
 from .attack_memory import AttackMemoryExchange, MemoryRecall
+from .dwell import HostileDwell
 from .lyapunov import ENERGY_MAX, LyapunovTrajectoryEngine, energy_contributions
 from .recovery import RecoveryPlanner, RecoveryVector
 from .regimes import RegimeClassifier, RegimeProfile, SystemRegime
@@ -80,6 +81,7 @@ class UREConfig:
         "adversarial_scale",
         "amx_capacity",
         "amx_half_life",
+        "dwell_baseline_ceiling",
         "enable_learning",
         "history_window",
         "latency_ceiling_ms",
@@ -105,6 +107,7 @@ class UREConfig:
         vaccine_capacity: int = 512,
         synthesis_threshold: int = 3,
         restore_patience: int = 3,
+        dwell_baseline_ceiling: float = 0.26,
         enable_learning: bool = True,
     ) -> None:
         self.history_window = history_window
@@ -118,6 +121,7 @@ class UREConfig:
         self.vaccine_capacity = vaccine_capacity
         self.synthesis_threshold = synthesis_threshold
         self.restore_patience = restore_patience
+        self.dwell_baseline_ceiling = dwell_baseline_ceiling
         self.enable_learning = enable_learning
 
 
@@ -134,6 +138,7 @@ class UREEngine:
         "_bve",
         "_classifier",
         "_config",
+        "_dwell",
         "_last",
         "_lock",
         "_lyapunov",
@@ -167,6 +172,9 @@ class UREEngine:
         )
         self._trajectory = TrajectoryEngine(window=self._config.history_window)
         self._classifier = RegimeClassifier(energy_max=ENERGY_MAX)
+        self._dwell = HostileDwell(
+            baseline_ceiling=self._config.dwell_baseline_ceiling
+        )
         self._amx = attack_memory or AttackMemoryExchange(
             capacity=self._config.amx_capacity, half_life=self._config.amx_half_life
         )
@@ -236,8 +244,16 @@ class UREEngine:
             recall = self._amx.recall(frame.signatures, now=timestamp)
             immunization = self._bve.immunize(frame.markers, now=timestamp)
             ambient = self._amx.ambient_pressure(now=timestamp)
+            # A flood aimed at evicting AMX's memory of an adversary is itself
+            # adversarial activity, and it is the one part of that attack that
+            # cannot be made quiet: it takes thousands of adverse events.
+            flood = self._amx.flood_pressure(now=timestamp)
             learned = clamp(
-                1.0 - (1.0 - recall.pressure) * (1.0 - immunization.pressure) * (1.0 - ambient)
+                1.0
+                - (1.0 - recall.pressure)
+                * (1.0 - immunization.pressure)
+                * (1.0 - ambient)
+                * (1.0 - flood)
             )
             if learned > 0.0:
                 state = state.raised("adversarial_pressure", learned)
@@ -249,6 +265,11 @@ class UREEngine:
             # 5. Trajectory.
             motion = self._trajectory.update(timestamp, energy, state)
 
+            # 5b. Hostile dwell. Updated after the learned pressure has been
+            #     folded into the state, so a signature AMX recognises counts
+            #     toward exposure the same way a directly observed one does.
+            dwell = self._dwell.update(state, timestamp)
+
             # 6. Regime classification.
             profile = self._classifier.classify(
                 state,
@@ -256,6 +277,7 @@ class UREEngine:
                 derivative,
                 volatility=motion.volatility,
                 recall_strength=max(recall.strength, immunization.best_match),
+                dwell=dwell,
             )
 
             # 7. Resilience index.
@@ -320,6 +342,7 @@ class UREEngine:
                 recommended_threshold=threshold.threshold,
                 decision=GovernanceDecision.from_recovery(vector.action),
                 time_to_saturation=self._lyapunov.time_to_threshold(ENERGY_MAX * 0.95),
+                hostile_dwell=dwell,
             )
             self._last = assessment
             return assessment
@@ -339,8 +362,9 @@ class UREEngine:
             energy = self._lyapunov.observe(state)
             derivative = self._lyapunov.derivative
             motion = self._trajectory.update(timestamp, energy, state)
+            dwell = self._dwell.update(state, timestamp)
             profile = self._classifier.classify(
-                state, energy, derivative, volatility=motion.volatility
+                state, energy, derivative, volatility=motion.volatility, dwell=dwell
             )
             breakdown = self._resilience.compute(
                 energy=energy,
@@ -393,6 +417,7 @@ class UREEngine:
                 recommended_threshold=threshold.threshold,
                 decision=GovernanceDecision.from_recovery(vector.action),
                 time_to_saturation=self._lyapunov.time_to_threshold(ENERGY_MAX * 0.95),
+                hostile_dwell=dwell,
             )
             self._last = assessment
             return assessment
@@ -560,6 +585,7 @@ class UREEngine:
             self._lyapunov.reset()
             self._trajectory.reset()
             self._planner.reset()
+            self._dwell.reset()
             self._thresholds.reset()
             if isinstance(self._telemetry, SmoothingAdapter):
                 self._telemetry.reset()
