@@ -325,4 +325,4 @@ the engine from accumulating superstitions.
 
 ## License
 
-Proprietary. Copyright (c) 2026 William King. All rights reserved. See [LICENSE](LICENSE).
+Proprietary. Copyright (c) 2026 William N. King. All rights reserved. See [LICENSE](LICENSE).
