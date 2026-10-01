@@ -325,4 +325,4 @@ the engine from accumulating superstitions.
 
 ## License
 
-Apache 2.0, see [LICENSE](LICENSE).
+Proprietary. Copyright (c) 2026 William King. All rights reserved. See [LICENSE](LICENSE).
