@@ -66,7 +66,7 @@ jobs:
           pip install -e ".[dev]"
           # Pinned to a release so a change to Ghost Tools cannot change this
           # gate without a PR here. Bump the tag on purpose.
-          pip install "git+https://github.com/wking53214/ghost_tools@v1.9.1"
+          pip install "git+https://github.com/wking53214/ghost_tools@V1.9.1"
 
       - name: Install gitleaks
         env:
