@@ -149,15 +149,30 @@ def run_scan(
         raise SystemExit(2)
 
     try:
-        findings = json.loads(completed.stdout)
+        data = json.loads(completed.stdout)
     except json.JSONDecodeError as exc:
         sys.stderr.write(f"integrity gate: could not parse scan output: {exc}\n")
         raise SystemExit(2) from exc
+    return findings_from(data)
 
-    if not isinstance(findings, list):
-        sys.stderr.write("integrity gate: expected a JSON list of findings\n")
+
+def findings_from(data: object) -> list[dict[str, object]]:
+    """The finding list, from either shape ghost-buster has printed.
+
+    Up to ghost_tools 1.9.0 ``--json`` printed a bare list. From ghost_tools
+    #97 it prints a report object whose ``findings`` key holds that list and
+    whose ``error`` key says when the scan did not happen. A report with an
+    error is not a clean scan, so it stops the gate rather than passing it.
+    """
+    if isinstance(data, list):
+        return data
+    if not isinstance(data, dict) or not isinstance(data.get("findings"), list):
+        sys.stderr.write("integrity gate: expected a list of findings or a report holding one\n")
         raise SystemExit(2)
-    return findings
+    if data.get("error"):
+        sys.stderr.write(f"integrity gate: ghost-buster reported an error: {data['error']}\n")
+        raise SystemExit(2)
+    return data["findings"]
 
 
 def report(findings: list[dict[str, object]]) -> int:
