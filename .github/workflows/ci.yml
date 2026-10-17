@@ -32,6 +32,31 @@ jobs:
         # demonstrating what the README claims, that is a failure.
         run: python examples/incident_walkthrough.py
 
+  cns:
+    # The optional CNS connector (ure_engine.cns_connector), with the extra installed. URE_REQUIRE_CNS=1
+    # turns a missing cns into a failure, so these tests cannot silently skip here.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install with the cns extra
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,cns]"
+
+      - name: Test with CNS present
+        env:
+          URE_REQUIRE_CNS: "1"
+        run: pytest -q -rs
+
   lint:
     runs-on: ubuntu-latest
     steps:

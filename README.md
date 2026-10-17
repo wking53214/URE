@@ -287,6 +287,21 @@ component whose entire job is to keep working when other things break.
 
 ---
 
+## Optional CNS connection
+
+URE does not need CNS. It has no runtime dependency, nothing in the package imports CNS when it loads, and the engine never imports it (`tests/test_cns_independence.py` checks this with CNS blocked). `ure_engine/cns_connector.py` is the one place that knows CNS exists. Install it with `pip install 'ure-engine[cns]'`; without CNS, building the gate raises `CnsNotInstalled` and nothing else changes.
+
+It restates URE's recommendation in CNS's shared gate vocabulary (`cns.gate`). URE recommends and the gateway decides, and that stays true: a consumer that speaks CNS can resolve the recommendation alongside gates from other repositories, and whether to honour it is still the consumer's call.
+
+| URE decision | CNS outcome | Why |
+|---|---|---|
+| `ALLOW` | `PASS` | nothing needs doing |
+| `REVIEW`, `THROTTLE`, `DEGRADE` | `RETRY` | the system is stressed or waiting on a human; ask again later or at a lower rate |
+| `ISOLATE`, `QUARANTINE`, `DENY` | `TERMINAL_BREACH` | asking again does not change the state it was cut off for |
+| anything else | `TERMINAL_BREACH` | an unknown decision is never read as permission |
+
+The verdict is bound with `cns.gate.subject_digest` to `assessment.to_dict()`, so it belongs to that exact observation and not to a later one. The gate sits at the `OMEGA` end by default (the assessment describes the state the work left the system in); `UREGate("alpha")` seats it as a precondition instead. The gate never changes the assessment or the engine.
+
 ## Design notes worth knowing
 
 **Resilience grows with experience.** A cold engine scores ~0.74, not 1.00, because it
