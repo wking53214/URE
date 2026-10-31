@@ -36,7 +36,7 @@ dependencies = []
 [project.optional-dependencies]
 dev = ["pytest>=7.4", "mypy>=1.8", "ruff>=0.3"]
 # Optional: lets URE's recommendation be asked as a CNS gate (ure_engine.cns_connector). Nothing in URE imports CNS otherwise.
-cns = ["cns @ git+https://github.com/wking53214/CNS.git@v1.9.0"]
+cns = ["cns @ git+https://github.com/wking53214/CNS.git@v2.3.0"]
 
 [project.urls]
 Homepage = "https://github.com/wking53214/URE"
