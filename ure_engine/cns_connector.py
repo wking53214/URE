@@ -49,6 +49,14 @@ front of it. ``subject`` is ``"assessment"`` and ``subject_digest`` is
 to that exact observation (its timestamp is in the dictionary) and not to a
 later one.
 
+Freshness
+---------
+An assessment describes one moment. The gate takes ``max_age`` (seconds,
+default ``DEFAULT_MAX_AGE_SECONDS``); an assessment older than that, dated
+more than ``FUTURE_SKEW_SECONDS`` ahead of this clock, or with a timestamp
+that is not a finite number is a ``TERMINAL_BREACH``. A ``max_age`` that is
+not a positive finite number is refused with ``ValueError``.
+
 Position
 --------
 ``OMEGA`` by default: the assessment describes the state the work left the
@@ -63,6 +71,8 @@ Install with the extra: ``pip install 'ure-engine[cns]'``.
 from __future__ import annotations
 
 import importlib
+import math
+import time
 from types import ModuleType
 from typing import Any
 
@@ -71,6 +81,8 @@ from .recovery import RecoveryAction
 from .regimes import SystemRegime
 
 __all__ = [
+    "DEFAULT_MAX_AGE_SECONDS",
+    "FUTURE_SKEW_SECONDS",
     "CnsNotInstalled",
     "UREGate",
     "assessment_digest",
@@ -80,6 +92,15 @@ __all__ = [
 
 INSTALL_HINT = "pip install 'ure-engine[cns]'"
 SUBJECT = "assessment"
+
+#: How old an assessment may be, in seconds, before the gate calls it stale.
+#: An assessment describes one moment; a minute later it no longer describes
+#: the system. Callers that observe less often pass a larger ``max_age``.
+DEFAULT_MAX_AGE_SECONDS = 60.0
+
+#: How far ahead of this clock an assessment's timestamp may be (clock skew)
+#: before the gate calls it future-dated.
+FUTURE_SKEW_SECONDS = 5.0
 
 _RETRY = frozenset(
     {GovernanceDecision.REVIEW, GovernanceDecision.THROTTLE, GovernanceDecision.DEGRADE}
@@ -133,10 +154,47 @@ def assessment_digest(assessment: UREAssessment) -> str:
     return str(_cns_gate().subject_digest(assessment.to_dict()))
 
 
-def to_cns_result(assessment: UREAssessment, *, position: str = "omega") -> Any:
-    """Restate one URE assessment as a ``cns.gate.GateResult``."""
+def _max_age(max_age: float) -> float:
+    if (
+        isinstance(max_age, bool)
+        or not isinstance(max_age, (int, float))
+        or not math.isfinite(max_age)
+        or max_age <= 0
+    ):
+        raise ValueError(f"max_age must be a positive finite number of seconds, not {max_age!r}")
+    return float(max_age)
+
+
+def _staleness(timestamp: object, max_age: float) -> str | None:
+    """Why ``timestamp`` cannot be judged as current, or None when it can."""
+    if (
+        isinstance(timestamp, bool)
+        or not isinstance(timestamp, (int, float))
+        or not math.isfinite(timestamp)
+    ):
+        return f"the assessment's timestamp {timestamp!r} is not a finite number of seconds"
+    now = time.time()
+    if timestamp > now + FUTURE_SKEW_SECONDS:
+        return f"the assessment is future-dated by {timestamp - now:.1f}s"
+    if now - timestamp > max_age:
+        return f"the assessment is stale: {now - timestamp:.1f}s old, max_age {max_age:g}s"
+    return None
+
+
+def to_cns_result(
+    assessment: UREAssessment,
+    *,
+    position: str = "omega",
+    max_age: float = DEFAULT_MAX_AGE_SECONDS,
+) -> Any:
+    """Restate one URE assessment as a ``cns.gate.GateResult``.
+
+    An assessment older than ``max_age`` seconds, or dated more than
+    ``FUTURE_SKEW_SECONDS`` ahead of this clock, is a ``TERMINAL_BREACH``.
+    """
     gate = _cns_gate()
     end = _position(gate, position)
+    max_age = _max_age(max_age)
     if not isinstance(assessment, UREAssessment):
         raise TypeError(f"URE's gate judges a UREAssessment; got {type(assessment).__name__}")
     decision = assessment.decision
@@ -190,6 +248,10 @@ def to_cns_result(assessment: UREAssessment, *, position: str = "omega") -> Any:
             outcome=gate.GateOutcome.TERMINAL_BREACH,
             reason=f"the assessment cannot be described for binding ({exc}); nothing was judged",
         )
+    stale = _staleness(assessment.timestamp, max_age)
+    if stale is not None:
+        outcome = gate.GateOutcome.TERMINAL_BREACH
+        reason = f"{stale}. {reason}"
     return gate.GateResult(
         gate="ure.assessment",
         position=end,
@@ -211,14 +273,19 @@ class UREGate:
 
     name = "ure.assessment"
 
-    def __init__(self, position: str = "omega") -> None:
+    def __init__(
+        self, position: str = "omega", *, max_age: float = DEFAULT_MAX_AGE_SECONDS
+    ) -> None:
         gate = _cns_gate()  # fail here, at construction, not on first use
         self._position = position
         _position(gate, position)
+        self._max_age = _max_age(max_age)
 
     @property
     def position(self) -> Any:
         return _position(_cns_gate(), self._position)
 
     def check(self, candidate: object) -> Any:
-        return to_cns_result(candidate, position=self._position)  # type: ignore[arg-type]
+        return to_cns_result(  # type: ignore[arg-type]
+            candidate, position=self._position, max_age=self._max_age
+        )

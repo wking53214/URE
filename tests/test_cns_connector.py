@@ -9,6 +9,7 @@ from __future__ import annotations
 import dataclasses
 import math
 import os
+import time
 
 import pytest
 
@@ -49,7 +50,7 @@ def assessment(decision: object = GovernanceDecision.ALLOW, **over: object) -> U
         resilience_index=0.9, regime=SystemRegime.NOMINAL, lyapunov_energy=0.1,
         lyapunov_derivative=0.0, trajectory_velocity=0.0, trajectory_acceleration=0.0,
         trajectory_volatility=0.0, active_attack_profiles=[], active_vaccines=[],
-        recommended_action=RecoveryAction.NONE, explanation="all quiet", timestamp=1000.0,
+        recommended_action=RecoveryAction.NONE, explanation="all quiet", timestamp=time.time(),
         decision=decision,
     )
     base.update(over)
@@ -109,12 +110,13 @@ def test_something_that_is_not_an_assessment_is_a_type_error_not_a_pass(bad):
 # ------------------------------------------------------------ against the real engine
 
 def test_a_healthy_system_passes_and_a_stressed_one_does_not():
+    t0 = time.time()
     engine = UREEngine()
-    calm = engine.observe({"latency_ms": 50, "error_rate": 0.0}, now=1000.0)
+    calm = engine.observe({"latency_ms": 50, "error_rate": 0.0}, now=t0)
     assert UREGate().check(calm).outcome is PASS
     engine = UREEngine()
     for i in range(12):
-        hot = engine.observe({"latency_ms": 1000, "error_rate": 1.0}, now=2000.0 + i)
+        hot = engine.observe({"latency_ms": 1000, "error_rate": 1.0}, now=t0 - 12 + i)
     verdict = UREGate().check(hot)
     assert verdict.outcome is EXPECTED[hot.decision] and verdict.outcome is not PASS
     assert verdict.binds(SUBJECT, assessment_digest(hot))
