@@ -300,6 +300,8 @@ It restates URE's recommendation in CNS's shared gate vocabulary (`cns.gate`). U
 | `ISOLATE`, `QUARANTINE`, `DENY` | `TERMINAL_BREACH` | asking again does not change the state it was cut off for |
 | anything else | `TERMINAL_BREACH` | an unknown decision is never read as permission |
 
+The decision is judged against the assessment's real state, never alone. `decision` defaults to `ALLOW`, so a hand-built `ATTACKED` / `QUARANTINE` assessment could otherwise carry a defaulted permission. The regime and the recommended action each imply a least restrictive decision (`CASCADING` at least `QUARANTINE`, `ATTACKED` at least `ISOLATE`, `STRESSED` and `UNKNOWN` at least `DEGRADE`, and `GovernanceDecision.from_recovery` of the action); a decision below either is a disagreement between state and decision, and that is `TERMINAL_BREACH`. A decision, regime or action that is not URE's own enum is an unbound `TERMINAL_BREACH`. The outcome is still a recommendation, not an authorization.
+
 The verdict is bound with `cns.gate.subject_digest` to `assessment.to_dict()`, so it belongs to that exact observation and not to a later one. The gate sits at the `OMEGA` end by default (the assessment describes the state the work left the system in); `UREGate("alpha")` seats it as a precondition instead. The gate never changes the assessment or the engine.
 
 ## Design notes worth knowing

@@ -35,6 +35,14 @@ anything else          ``TERMINAL_BREACH``  (an unknown decision is
                        never read as permission)
 =====================  =============================================
 
+The decision is read against the assessment's state, never on its own:
+``decision`` defaults to ``ALLOW``, so a hand-built assessment can leave it
+unset. The regime and the recommended action each imply a least restrictive
+decision (the floors the engine's planner never goes below); a stated decision
+below either one means state and decision disagree, and that is
+``TERMINAL_BREACH``. A decision, regime or recommended action that is not of
+URE's own enum type is an unbound ``TERMINAL_BREACH``.
+
 The reason is URE's own explanation, with the regime and the decision in
 front of it. ``subject`` is ``"assessment"`` and ``subject_digest`` is
 ``cns.gate.subject_digest`` over ``assessment.to_dict()``, so a verdict binds
@@ -59,6 +67,8 @@ from types import ModuleType
 from typing import Any
 
 from .assessment import GovernanceDecision, UREAssessment
+from .recovery import RecoveryAction
+from .regimes import SystemRegime
 
 __all__ = [
     "CnsNotInstalled",
@@ -74,6 +84,19 @@ SUBJECT = "assessment"
 _RETRY = frozenset(
     {GovernanceDecision.REVIEW, GovernanceDecision.THROTTLE, GovernanceDecision.DEGRADE}
 )
+
+#: The least restrictive decision each regime admits. These are the floors the
+#: engine's own recovery planner never goes below (``recovery.py``), so a real
+#: assessment always meets them; a hand-built one that does not is a breach.
+_REGIME_FLOOR = {
+    SystemRegime.NOMINAL: GovernanceDecision.ALLOW,
+    SystemRegime.ADAPTING: GovernanceDecision.ALLOW,
+    SystemRegime.RECOVERING: GovernanceDecision.ALLOW,
+    SystemRegime.STRESSED: GovernanceDecision.DEGRADE,
+    SystemRegime.UNKNOWN: GovernanceDecision.DEGRADE,
+    SystemRegime.ATTACKED: GovernanceDecision.ISOLATE,
+    SystemRegime.CASCADING: GovernanceDecision.QUARANTINE,
+}
 
 
 class CnsNotInstalled(ImportError):
@@ -117,14 +140,47 @@ def to_cns_result(assessment: UREAssessment, *, position: str = "omega") -> Any:
     if not isinstance(assessment, UREAssessment):
         raise TypeError(f"URE's gate judges a UREAssessment; got {type(assessment).__name__}")
     decision = assessment.decision
-    if decision is GovernanceDecision.ALLOW:
+    regime = assessment.regime
+    action = assessment.recommended_action
+    if (
+        not isinstance(decision, GovernanceDecision)
+        or not isinstance(regime, SystemRegime)
+        or not isinstance(action, RecoveryAction)
+    ):
+        return gate.GateResult(
+            gate="ure.assessment",
+            position=end,
+            outcome=gate.GateOutcome.TERMINAL_BREACH,
+            reason=(
+                "the assessment's decision, regime or recommended action is not of URE's "
+                "own type; nothing was judged"
+            ),
+        )
+    # Judge from the state, not from ``decision`` alone: ``decision`` has a
+    # default (ALLOW), so a hand-built assessment can carry it unset. The state
+    # implies the least restrictive decision it admits; a stated decision below
+    # that is a disagreement, and a disagreement is a breach.
+    implied = max(
+        GovernanceDecision.from_recovery(action),
+        _REGIME_FLOOR[regime],
+        key=lambda d: d.restriction,
+    )
+    disagrees = decision.restriction < implied.restriction
+    if disagrees:
+        outcome = gate.GateOutcome.TERMINAL_BREACH
+    elif decision is GovernanceDecision.ALLOW:
         outcome = gate.GateOutcome.PASS
     elif decision in _RETRY:
         outcome = gate.GateOutcome.RETRY
     else:
         outcome = gate.GateOutcome.TERMINAL_BREACH
-    shown = getattr(decision, "value", decision)
-    reason = f"{assessment.regime.value}, {shown}: {assessment.explanation}"
+    reason = f"{regime.value}, {decision.value}: {assessment.explanation}"
+    if disagrees:
+        reason = (
+            f"state and decision disagree: {regime.value} with recommended action "
+            f"{action.value} implies at least {implied.value}, but the decision is "
+            f"{decision.value}. {reason}"
+        )
     try:
         digest = assessment_digest(assessment)
     except (TypeError, ValueError, AttributeError) as exc:
