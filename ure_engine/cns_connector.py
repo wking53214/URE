@@ -182,7 +182,7 @@ def _staleness(timestamp: object, max_age: float) -> str | None:
 
 
 def to_cns_result(
-    assessment: UREAssessment,
+    assessment: object,
     *,
     position: str = "omega",
     max_age: float = DEFAULT_MAX_AGE_SECONDS,
@@ -286,6 +286,6 @@ class UREGate:
         return _position(_cns_gate(), self._position)
 
     def check(self, candidate: object) -> Any:
-        return to_cns_result(  # type: ignore[arg-type]
+        return to_cns_result(
             candidate, position=self._position, max_age=self._max_age
         )
