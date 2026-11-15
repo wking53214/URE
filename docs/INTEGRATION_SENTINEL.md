@@ -3,8 +3,10 @@
 **Status:** proposal, not a decision. Nothing here has run against production
 traffic.
 **Audience:** Fable, who owns whether this happens and on what schedule.
-**Evidence:** simulation only. Every number below is reproducible from this
-repository; none of it is observed.
+**Evidence:** simulation only, none of it observed. The red-team and engine
+results are reproducible from this repository (section 8). The tuning table in
+section 4 is **not**: it came from a simulated load generator that is not in
+the repository, and the scripts that produced it did not survive.
 
 ---
 
@@ -43,7 +45,10 @@ assessment. sentinel_os decides what to do with it, including nothing.
 
 **No dependency in either direction.** URE does not import sentinel_os and
 sentinel_os does not import URE. The contract is the shape of two mappings,
-which sentinel_os already produces and would produce anyway.
+which sentinel_os already produces and would produce anyway. The poller is the
+one piece of code that touches both, so where it lives (inside sentinel_os, or
+beside it) is the decision that determines whether that stays true. I have not
+read sentinel_os's dependency policy beyond its README.
 
 **No new runtime dependencies.** URE's engine is pure standard library.
 
@@ -65,17 +70,53 @@ adapter = SentinelAdapter(SentinelConfig(
     dlq_rate_ceiling=20.0,   # DLQ arrivals/min that mean "full"
     overdue_ceiling=20,      # processing_overdue that means "reaper is behind"
 ))
-engine = UREEngine(UREConfig(
-    smoothing_alpha=0.6, slope_window=12, history_window=64, restore_patience=5,
-))
+engine = UREEngine(UREConfig.for_sentinel_os())   # a preset, not new defaults
+engine.import_dwell(saved)   # optional, from the last run's engine.export_dwell()
 
-# once per poll, one adapter and one engine per monitored breaker
+# once per poll, one adapter and one engine per monitored breaker.
+# Do not pass now=: timestamps default to wall-clock, and the CNS gate judges
+# staleness against wall-clock (section 5, Stage 3).
 assessment = engine.observe(adapter.to_frame(
     breaker.snapshot(), queue.stats(),
     dlq_per_minute=dlq_rate,
     injection_hits=policy_hit_rate,   # 0.0 if there is no policy layer here
 ))
 ```
+
+`UREConfig.for_sentinel_os()` carries the tuned values as a named preset
+rather than changing URE's defaults. They were fitted to simulated traffic whose
+shapes I guessed, so making them everyone's default would put simulation-fitted
+numbers into behaviour nobody chose. A deployment that has measured something
+else passes it as an override.
+
+### Poll cadence, restarts, and what the engine remembers
+
+**Dwell's time constants are in seconds, not observations.** They were written
+and first tested at one second per observation, which hid that. The
+false-positive guarantee holds at every cadence tested (1, 5, 30 and 60 seconds:
+a deployment whose normal rate is 25% never alarms). Detection speed is the
+part that moves. A sustained 30% attack against a quiet baseline is called after
+about 13 seconds at 1s polls and about 60 seconds at 30s polls, which is two
+observations: slow polling detects in fewer observations, not more, and has a
+floor of about two. Every "13 observations" figure in this repository is at one
+second per observation.
+
+Pick the cadence against the CNS gate's `max_age` (default 60s) with room to
+spare. I would not poll slower than a quarter of it. That is a judgement, not a
+measurement.
+
+**Restarts.** The learned baseline is state, and losing it costs the warmup with
+detection off. Worse, an engine that comes up during an attack learns the attack
+as normal, so an adversary who can crash the engine gets a free calibration
+window. Persist `engine.export_dwell()` on shutdown and `engine.import_dwell()`
+on startup. The imported record is untrusted: it is clamped to the engine's own
+ceiling, so a forged or stale baseline can hide traffic below ceiling plus
+margin and never above it, and anything malformed is refused whole. After a
+confirmed incident, do the opposite: `engine.reset()` and discard the saved
+state, since that baseline is the one the attack may have shaped.
+
+`assessment.hostile_baseline` shows what a call was judged against, next to
+`assessment.hostile_dwell`.
 
 ### Three things that were wrong when this was first built
 
@@ -124,6 +165,11 @@ everywhere, and ranking on the mean hides exactly that.
 
 `slope_window` dominates: 3 gives a 43% worst cell, 12 gives 79%. If only one
 constant is carried over from this document, carry that one.
+
+**None of this table can be reproduced from this repository.** The load
+generator and tuner that produced it were scratch code and did not survive. The
+scenarios are described above well enough to rebuild, but a rebuild would not
+reproduce these numbers exactly.
 
 **These are not universal.** They are fitted to simulated traffic with the
 shapes I guessed sentinel_os produces. Stage 1 exists to replace the guess.
@@ -174,9 +220,37 @@ currently make. Leave THROTTLE, DEGRADE, and QUARANTINE advisory.
 
 Ship the kill switch in the same change, not after it.
 
+**Route it through the CNS gate, and do not act on the gate alone.** URE ships
+`UREGate` (`ure_engine/cns_connector.py`), which restates an assessment as a
+`cns.gate.GateResult`. sentinel_os already requires `cns.gate` (its README pins
+v4.0.0, the same tag URE pins), so the vocabulary is shared. The mapping:
+
+| URE decision | CNS outcome | Stage 3 |
+|---|---|---|
+| ALLOW | PASS | nothing |
+| THROTTLE, DEGRADE, REVIEW | RETRY | advisory only |
+| ISOLATE, QUARANTINE, DENY | TERMINAL_BREACH | ISOLATE acts; the rest stay advisory |
+
+URE still only recommends. The gate restates the recommendation and grants no
+authorization, and the consumer decides what to do with it.
+
+The connector adds a hazard this proposal had not anticipated. **An assessment
+older than `max_age`, dated in the future, or with a non-finite timestamp is a
+`TERMINAL_BREACH`.** That is the right default for a gate, and it makes the
+poller's liveness a safety dependency: a stalled or crashed poller, or clock
+skew between hosts, produces the same outcome as an attack. Acting on
+`TERMINAL_BREACH` alone would turn a poller outage into an automated isolation.
+
+So the consumer must check the assessment itself, not only the gate: act only
+when `assessment.regime` is ATTACKED and the assessment is fresh, and treat a
+stale or future-dated one as "URE is unavailable", which pages a human and
+isolates nothing. The gate's reason string says why it breached, but matching on
+prose is fragile and I would not build on it.
+
 **Exit criteria**
 - Every automated isolation is reviewed within 24 hours and judged correct.
 - Time to mitigation improves measurably against the Stage 2 baseline.
+- Killing the poller produces an alert and no isolation. Tested, not assumed.
 
 **Abort if** any automated isolation is judged wrong. One wrong isolation in a
 population of correct ones is still a self-inflicted outage, and the review
@@ -233,8 +307,9 @@ Two consequences for your rollout:
 * **An engine started during an attack learns the attack as normal**, up to
   `dwell_baseline_ceiling`. It self-heals on the first genuine lull, but after
   any confirmed incident the right move is `engine.reset()` to re-baseline
-  deliberately. `assessment.hostile_dwell` and the dwell baseline are both
-  exposed so an operator can see what a call was judged against.
+  deliberately. `assessment.hostile_dwell` and `assessment.hostile_baseline` show
+  what a call was judged against. (An earlier revision of this document said
+  the baseline was exposed when it was not.)
 
 **Also closed, both memory-poisoning attacks.**
 
@@ -249,8 +324,10 @@ profile.
 An adversary who pays for corroborated decoys can still displace memory, and
 that half is detected rather than prevented: replacing a full memory takes
 thousands of adverse events in minutes, and `AttackMemoryExchange.flood_pressure`
-reports a memory that is both full and mostly new, which feeds adversarial
-pressure. The attack converts into a detection.
+reports the fraction of the established (corroborated) memory recently pushed
+out, which feeds adversarial pressure. The attack converts into a detection.
+(The first version alarmed on a memory that was "full and mostly new". That was
+a lever, not a defence, and is described in the next section.)
 
 *BVE poisoning.* Benign evidence was counted from the same bounded ring buffer
 as adverse evidence, so flooding adverse episodes flushed the evidence that
@@ -266,8 +343,52 @@ successful requests does not need this attack.
 **What this changes for your rollout.** The Stage 3 caveat about leaving
 `enable_learning=False` until Stage 4 was written when both of these were open.
 It is now a judgement call rather than a requirement. The conservative reading
-still holds, though: learning is the part of URE under direct attacker
-influence, and Stage 3 has enough to prove without it.
+still holds, and the red-team pass above is the reason: it found that memory,
+the part learning feeds, was the cheapest lever in the engine. Those holes are
+closed and tested, but they were found by attacking the fixes, which is
+evidence that more may be there. Learning is the part of URE under direct
+attacker influence, and Stage 3 has enough to prove without it.
+
+### Red-teaming the fixes
+
+The fixes above were attacked in turn, and the pass found problems in them and
+one that predates them. Stated in order of severity, with what was measured.
+
+**Memory was a lever, and cheap to pull. This predates my changes.** Ambient
+pressure, AMX's background contribution to adversarial pressure, was documented
+as colouring an assessment rather than dominating it. Its cap of 0.5 sat exactly
+where ATTACKED outvotes NOMINAL on adversarial pressure alone (measured
+crossover 0.49 with every other pressure healthy). Eight unique rejected
+requests held a healthy deployment in a restrictive state for **about seven
+hours** after the last one. At Stage 3 that is an automated isolation bought
+for eight requests. The cap is now 0.40, and the property is pinned by
+behaviour, not by the constant: after any number of remembered signatures,
+restriction ends within about two minutes of the attacker stopping.
+
+My first red team marked "hysteresis lock" as held. It was, for what it tested
+(maxed telemetry, no signatures), but it never exercised the path where a
+remembered attack feeds back into pressure. That was a blind spot, not a
+defence.
+
+**My dwell fix made it worse.** Dwell was fed the state after AMX's ambient
+echo had been folded in, so a memory of an attack counted as ongoing exposure.
+One rejected request held ISOLATE for about 86 minutes. Dwell now sees only what
+was observed now. After the fix the same request restricts nothing.
+
+**My first flood detector was a lever.** It fired on a memory that was full and
+mostly new, but churning one-off signatures harms nothing, since the partition
+guarantees they can evict only each other. Activity anyone can generate for the
+price of a few rejected requests was feeding adversarial pressure. It now fires
+on harm instead: corroborated memory being displaced.
+
+**Dwell timing is in seconds.** Covered above under poll cadence.
+
+**Not established.** Feeding URE one observation per request, with 10% of them
+hostile, holds ISOLATE. It does so identically with the flood term disabled, so
+it is neither of the above, and I did not investigate whether it is right. It
+does not apply to the polled, aggregated frames this adapter produces. It does
+apply to a per-request integration such as a gateway, so check it before
+reusing the engine that way.
 
 **An architectural limit, not a defect.** Once every pressure clamps at 1.0,
 further escalation is invisible: a 10x increase produces a byte-identical state
@@ -284,16 +405,18 @@ energy, derivative and volatility have all gone flat. **If you are building a
 
 ```bash
 pip install -e .
-pytest                                        # engine and adapter
-pytest tests/test_adversarial.py -v           # the attacks, and which still win
+pytest                                        # engine, adapter and connector
+pytest tests/test_adversarial.py -v           # the attacks, and what each costs
+pytest tests/test_dwell_persistence.py -v     # baseline persistence and the preset
 python tools/integrity_gate.py . --mutate     # the integrity gate
 ```
 
 The tuning sweep ran against a simulated sentinel_os load generator that is not
-in this repository, because a scenario generator built from my guesses about
-sentinel_os traffic is not evidence and should not be shipped looking like it
-is. The tuned constants it produced are recorded in section 4 and the
-scenarios are described there well enough to rebuild. **Stage 1 replaces them
+in this repository. It was not shipped on purpose, because a scenario generator
+built from my guesses about sentinel_os traffic is not evidence and should not
+be shipped looking like it is, and its scripts have since been lost. The tuned
+constants it produced are recorded in section 4 and the scenarios are described
+there, but the tuning table itself is not reproducible from here. **Stage 1 replaces them
 with measurements, which is the point of Stage 1.**
 
 ---
