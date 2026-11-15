@@ -103,8 +103,25 @@ PROBATION_FRACTION: float = 0.25
 #: cannot mint: they can claim any severity they like, but they cannot claim to
 #: have been here longer than they have.
 
-#: Window over which a full memory being replaced counts as a flood.
+#: Half-life, in seconds, of the count of recently displaced corroborated
+#: profiles. Sets what "recently" means for :meth:`flood_pressure`.
 FLOOD_WINDOW: float = 300.0
+
+#: The most background pressure the whole memory may add on its own.
+#:
+#: Ambient pressure is documented as colouring an assessment rather than
+#: dominating it, and it did not. Its previous maximum of 0.5 sat exactly where
+#: ATTACKED outvotes NOMINAL on adversarial pressure alone (measured crossover:
+#: 0.49 with every other pressure healthy), so eight remembered signatures were
+#: enough to hold a healthy deployment in ISOLATE for about seven hours after
+#: the last one. Eight unique rejected requests is a trivial price for that.
+#:
+#: 0.40 leaves memory alone losing to NOMINAL by a wide margin while still
+#: tipping an observation that carries some present evidence, which is the
+#: intended role. ``tests/test_adversarial.py`` pins the behaviour (memory with
+#: no present evidence never restricts), not this number, so retuning it cannot
+#: quietly reopen the hole.
+AMBIENT_CEILING: float = 0.40
 PERSISTENCE_SCALE: float = 300.0
 
 
@@ -255,8 +272,10 @@ class AttackMemoryExchange:
     __slots__ = (
         "_admissions",
         "_capacity",
+        "_displaced",
         "_half_life",
         "_last_admission",
+        "_last_displacement",
         "_lock",
         "_profiles",
     )
@@ -269,6 +288,9 @@ class AttackMemoryExchange:
         # that arrived alone from one that arrived in a flood.
         self._admissions = 0.0
         self._last_admission: float | None = None
+        # Decaying count of corroborated profiles pushed out to make room.
+        self._displaced = 0.0
+        self._last_displacement: float | None = None
         self._half_life = half_life
         self._profiles: dict[str, AttackProfile] = {}
         self._lock = threading.RLock()
@@ -365,7 +387,15 @@ class AttackMemoryExchange:
         self._admissions += 1.0
         return burst
 
-    def _evict_if_needed(self, now: float) -> None:
+    def _note_displacement(self, now: float, count: int) -> None:
+        """Record corroborated profiles pushed out. Caller holds the lock."""
+        previous = self._last_displacement
+        self._last_displacement = now
+        if previous is not None:
+            self._displaced *= math.pow(0.5, max(0.0, now - previous) / FLOOD_WINDOW)
+        self._displaced += count
+
+    def _evict_if_needed(self, now: float, *, count_displacement: bool = True) -> None:
         """Make room, taking it from the least corroborated memory first.
 
         Ranking on severity alone is what made the flooding attack work:
@@ -410,6 +440,8 @@ class AttackMemoryExchange:
         if overflow > 0:
             for profile in weakest_first(established)[:overflow]:
                 self._profiles.pop(profile.signature, None)
+            if count_displacement:
+                self._note_displacement(now, overflow)
 
     # -- read -------------------------------------------------------------
 
@@ -493,38 +525,45 @@ class AttackMemoryExchange:
         union = 1.0
         for severity in severities:
             union *= 1.0 - severity
-        # Damped: ambient history should colour the assessment, not dominate it.
-        return clamp((1.0 - union) * 0.5)
+        # Capped: ambient history should colour the assessment, not dominate it.
+        return clamp((1.0 - union) * AMBIENT_CEILING)
 
     def flood_pressure(self, now: float | None = None) -> float:
-        """Evidence that the memory itself is under a replacement attack.
+        """Evidence that corroborated memory is being displaced, on [0, 1].
 
         An adversary who can afford corroborated decoys cannot be stopped by
         eviction ranking: they will match whatever evidence shape the incumbent
-        has and out-claim its severity by a hair. What they cannot do is hide.
-        Displacing a full memory means minting capacity-many signatures and
-        making each recur, which is thousands of adverse events in minutes.
+        has. What they cannot do is displace it quietly. Pushing established
+        profiles out of a partitioned memory means minting several times the
+        established region's worth of signatures and making each recur, which
+        is thousands of adverse events in minutes.
 
-        So this reports the one structural fact that follows: a memory that is
-        **full** and mostly **new** has just been replaced. Both conditions
-        matter. A deployment still filling its memory is trivially all-new and
-        must not read as flooded, which is why capacity is checked first, and a
-        full memory in steady state turns over slowly by definition.
+        This measures exactly that harm and nothing broader. An earlier version
+        alarmed on a memory that was "full and mostly new", which is a lever
+        rather than a defence: churning cheap one-off signatures harms nothing
+        (the partition guarantees singletons can evict only each other), yet it
+        read as a flood and fed adversarial pressure, so eight-odd cheap
+        rejected requests could be spent to make the engine restrict a healthy
+        deployment. Alarming on harm instead of on activity removes the lever:
+        the cheap path to this signal does not exist, because the cheap path
+        displaces nothing.
 
-        Scale-free on purpose. It is a fraction of this deployment's own
-        memory, not a rate threshold, so it makes no claim about how many
-        signatures per minute is normal anywhere.
+        Scale-free: the fraction of this deployment's own established memory
+        recently pushed out, not a rate. Normal turnover of a large memory is
+        a few percent; a tenth is where it stops being explicable, and
+        two fifths is a full signal.
         """
         timestamp = time.time() if now is None else now
         with self._lock:
-            total = len(self._profiles)
-            if total < self._capacity:
-                return 0.0
-            cutoff = timestamp - FLOOD_WINDOW
-            recent = sum(1 for p in self._profiles.values() if p.first_seen >= cutoff)
-        # Ramps in over the upper half: half a memory replaced in five minutes
-        # is where this stops being explicable as ordinary discovery.
-        return clamp((recent / total - 0.5) / 0.5)
+            displaced = self._displaced
+            if self._last_displacement is not None:
+                elapsed = max(0.0, timestamp - self._last_displacement)
+                displaced *= math.pow(0.5, elapsed / FLOOD_WINDOW)
+            established = sum(1 for p in self._profiles.values() if p.frequency >= 2)
+        if displaced <= 0.0:
+            return 0.0
+        fraction = displaced / (displaced + established)
+        return clamp((fraction - 0.10) / 0.30)
 
     # -- introspection and exchange ---------------------------------------
 
@@ -594,5 +633,5 @@ class AttackMemoryExchange:
                         tags=existing.tags | incoming.tags,
                     )
                 accepted += 1
-            self._evict_if_needed(time.time())
+            self._evict_if_needed(time.time(), count_displacement=False)
         return accepted

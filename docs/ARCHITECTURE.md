@@ -244,7 +244,7 @@ deployment-specific.
 |---|---|---|
 | Pre-dwell engine | 36.2% | never |
 | Fixed floor 0.12 | 18.5% | 18 obs |
-| Learned baseline | 39.0% | 13 obs |
+| Learned baseline | 39.0% | 13 obs (at 1 s per observation) |
 
 Strictly better than the original engine on both axes at once.
 
@@ -254,6 +254,11 @@ calibrating to it permanently. Ceiling plus margin lands on 0.36, exactly where
 the pre-dwell engine detected on affinity alone, so an adversary who spends
 tens of thousands of observations walking the baseline to its cap arrives at a
 wall the original engine already enforced and gains nothing for the patience.
+
+Dwell's time constants are in **seconds**, taken from the timestamps, not in
+observations. The false-positive guarantee holds at every poll cadence tested
+(1, 5, 30 and 60 seconds); detection speed is what scales, and a slow poll
+detects in fewer observations with a floor of about two.
 
 Three further properties keep it honest:
 
@@ -306,8 +311,28 @@ first_seen, tags)`.
   A sum saturates at 1.0 after two matches and stops discriminating.
 - **Ambient pressure**: a deployment under sustained attack is in a different
   posture than an idle one regardless of what *this* request looks like.
-  Capped to the strongest 8 profiles and halved, so a large memory of weak
-  signatures cannot manufacture pressure by volume.
+  Taken from the strongest 8 profiles and **capped at 0.40**, so a large memory
+  of weak signatures cannot manufacture pressure by volume. The cap used to be
+  0.5, which sat exactly on the point where ATTACKED outvotes NOMINAL on
+  adversarial pressure alone (measured crossover 0.49), so eight unique rejected
+  requests held a healthy deployment in ISOLATE for about seven hours. Memory
+  must colour an assessment and never decide one. The property is pinned by
+  behaviour in `tests/test_adversarial.py`, not by the constant, so a retune that
+  lands back on the edge fails there.
+- **Retention is by corroboration, not claimed severity.** Severity is whatever
+  the caller reported, so ranking eviction on it let anyone claiming 0.99 evict a
+  real profile at 0.95. Recurrence across elapsed time must be spent rather than
+  claimed, so it ranks, and signatures seen once compete only for a reserved
+  share of capacity and can evict nothing but each other.
+- **`flood_pressure` measures harm, not activity.** It reports the fraction of
+  the *established* memory recently displaced, which only happens when someone
+  out-pays the partition. An earlier version alarmed on a memory that was "full
+  and mostly new", which anyone could trigger with cheap one-off signatures that
+  harm nothing, so the alarm was a lever.
+- **Dwell sees present evidence only.** It is fed the current observation and
+  any match against memory that observation produced, never the ambient echo.
+  Feeding it the echo turned one rejected request into about 86 minutes of
+  ISOLATE.
 - **Exchange**: `export_profiles` / `import_profiles` round-trip so a fleet can
   pool what it has learned. Nothing in a profile is request content.
 

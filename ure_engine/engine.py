@@ -124,6 +124,34 @@ class UREConfig:
         self.dwell_baseline_ceiling = dwell_baseline_ceiling
         self.enable_learning = enable_learning
 
+    @classmethod
+    def for_sentinel_os(cls, **overrides: Any) -> UREConfig:
+        """The settings tuned for the sentinel_os integration.
+
+        A preset rather than new defaults, deliberately. These values were
+        fitted to a *simulated* sentinel_os load generator, and the traffic
+        shapes in it were my guesses, so promoting them to defaults would make
+        simulation-fitted numbers everyone's behaviour without anyone having
+        chosen that. Stage 1 of ``docs/INTEGRATION_SENTINEL.md`` exists to
+        replace them with measurements; until then they are what this
+        integration starts from, and a deployment that has measured something
+        else passes it as an override.
+
+        ``slope_window`` is the one that mattered: 3 gave a 43% worst case over
+        the simulated scenarios, 12 gave 79%.
+        """
+        settings: dict[str, Any] = {
+            "smoothing_alpha": 0.6,
+            "slope_window": 12,
+            "history_window": 64,
+            "restore_patience": 5,
+        }
+        unknown = set(overrides) - set(cls.__slots__)
+        if unknown:
+            raise TypeError(f"unknown UREConfig setting(s): {sorted(unknown)}")
+        settings.update(overrides)
+        return cls(**settings)
+
 
 class UREEngine:
     """The Universal Resilience Engine.
@@ -207,6 +235,29 @@ class UREEngine:
         """The adaptive threshold controller, for false-discovery feedback."""
         return self._thresholds
 
+    def export_dwell(self) -> dict[str, object]:
+        """The learned hostile-pressure baseline, for carrying across a restart.
+
+        Persist this on shutdown and pass it to :meth:`import_dwell` on startup
+        so a restart neither blinds detection for the warmup nor lets an
+        engine that comes up mid-attack calibrate to it. After a confirmed
+        incident, do the opposite: :meth:`reset` and discard the saved state,
+        since that is the baseline the attack may have shaped.
+        """
+        with self._lock:
+            return self._dwell.export_state()
+
+    def import_dwell(self, state: object) -> bool:
+        """Restore a baseline from :meth:`export_dwell`. True if accepted.
+
+        Call before the first observation. A malformed record is refused whole
+        and changes nothing; an accepted one is clamped to this engine's
+        ``dwell_baseline_ceiling``, so a stale or tampered record cannot raise
+        the evasion band above the configured ceiling.
+        """
+        with self._lock:
+            return self._dwell.import_state(state)
+
     @property
     def last_assessment(self) -> UREAssessment | None:
         return self._last
@@ -243,6 +294,16 @@ class UREEngine:
             #    not a footnote attached to it afterwards.
             recall = self._amx.recall(frame.signatures, now=timestamp)
             immunization = self._bve.immunize(frame.markers, now=timestamp)
+            # What dwell may count as exposure: the current observation plus any
+            # match against memory THIS observation produced. Not the ambient
+            # term below, which is an echo of past attacks decaying over hours
+            # and says nothing about whether anyone is attacking now. Feeding
+            # the echo to dwell turned one rejected request into ~86 minutes of
+            # ISOLATE on an otherwise healthy deployment, because the echo
+            # (~0.44) sits above the baseline ceiling plus margin and dwell
+            # read it as sustained exposure.
+            present = clamp(1.0 - (1.0 - recall.pressure) * (1.0 - immunization.pressure))
+            observed = state.raised("adversarial_pressure", present) if present > 0.0 else state
             ambient = self._amx.ambient_pressure(now=timestamp)
             # A flood aimed at evicting AMX's memory of an adversary is itself
             # adversarial activity, and it is the one part of that attack that
@@ -265,10 +326,8 @@ class UREEngine:
             # 5. Trajectory.
             motion = self._trajectory.update(timestamp, energy, state)
 
-            # 5b. Hostile dwell. Updated after the learned pressure has been
-            #     folded into the state, so a signature AMX recognises counts
-            #     toward exposure the same way a directly observed one does.
-            dwell = self._dwell.update(state, timestamp)
+            # 5b. Hostile dwell, over what was observed now. See ``observed``.
+            dwell = self._dwell.update(observed, timestamp)
 
             # 6. Regime classification.
             profile = self._classifier.classify(
@@ -343,6 +402,7 @@ class UREEngine:
                 decision=GovernanceDecision.from_recovery(vector.action),
                 time_to_saturation=self._lyapunov.time_to_threshold(ENERGY_MAX * 0.95),
                 hostile_dwell=dwell,
+                hostile_baseline=self._dwell.baseline,
             )
             self._last = assessment
             return assessment
@@ -418,6 +478,7 @@ class UREEngine:
                 decision=GovernanceDecision.from_recovery(vector.action),
                 time_to_saturation=self._lyapunov.time_to_threshold(ENERGY_MAX * 0.95),
                 hostile_dwell=dwell,
+                hostile_baseline=self._dwell.baseline,
             )
             self._last = assessment
             return assessment

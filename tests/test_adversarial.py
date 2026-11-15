@@ -45,6 +45,8 @@ the encoding that makes both loud.
 
 from __future__ import annotations
 
+import pytest
+
 from ure_engine import RecoveryAction, SystemRegime, UREConfig, UREEngine
 from ure_engine.vaccines import Observation
 
@@ -677,3 +679,231 @@ def test_saturation_still_recommends_restrictive_action() -> None:
         RecoveryAction.QUARANTINE, RecoveryAction.ISOLATE,
     ), f"saturated engine recommended {a.recommended_action.value}"
     assert a.regime is not SystemRegime.NOMINAL
+
+
+# ---------------------------------------------------------------------------
+# A7. Memory as a lever (DEFENCE_DoS), found by red-teaming the fixes
+# ---------------------------------------------------------------------------
+#
+# The first red team marked "hysteresis lock" as held, and it was, for what it
+# tested: maxed telemetry with no signatures. It never exercised the path where
+# a remembered attack feeds back into pressure, which is where the real lever
+# was. Red-teaming the fixes found it, and found that one of the fixes had made
+# it worse. Both are pinned below by behaviour, never by the constants involved,
+# so retuning them cannot quietly reopen the hole.
+# ---------------------------------------------------------------------------
+
+RESTRICTIVE_ACTIONS = frozenset({"ISOLATE", "QUARANTINE", "THROTTLE", "DEGRADE"})
+
+
+def probe(index: int, risk: float = 0.9) -> dict:
+    """One rejected request carrying a unique signature, on a healthy system."""
+    return dict(BENIGN, risk_score=risk, signatures=(f"probe-{index}",))
+
+
+def restricted_after_probes(count: int, risk: float = 0.9, quiet_seconds: int = 900):
+    """Seconds, after the last probe, until the deployment stops being restricted."""
+    engine = UREEngine(UREConfig(**TUNED))
+    _, t = run(engine, BENIGN, 150)
+    for index in range(count):
+        engine.observe(probe(index, risk), now=float(t))
+        t += 1
+        _, t = run(engine, BENIGN, 9, start=t)
+
+    last_restricted, final = 0, None
+    for offset in range(1, quiet_seconds):
+        final = engine.observe(BENIGN, now=float(t))
+        t += 1
+        if final.recommended_action.value in RESTRICTIVE_ACTIONS:
+            last_restricted = offset
+    assert final is not None
+    return last_restricted, final
+
+
+def test_one_rejected_request_does_not_hold_a_healthy_deployment_restricted() -> None:
+    """The regression my own dwell fix introduced.
+
+    Dwell was fed the state AFTER AMX's ambient pressure had been folded in. One
+    rejected request leaves a decaying echo of about 0.44 in memory; that sits
+    above the baseline ceiling plus margin, so dwell read a memory of an attack
+    as ongoing exposure, charged to 1.0 and held ISOLATE for about 86 minutes on
+    an otherwise healthy system. Dwell now counts only what was observed now.
+    """
+    last_restricted, final = restricted_after_probes(1)
+
+    assert last_restricted <= 120, (
+        f"one rejected request restricted a healthy deployment for "
+        f"{last_restricted}s after it stopped"
+    )
+    assert final.hostile_dwell < 0.05, (
+        f"dwell is {final.hostile_dwell:.2f} after 15 quiet minutes; something "
+        f"other than present evidence is feeding it"
+    )
+
+
+@pytest.mark.parametrize("count", [2, 8, 64])
+@pytest.mark.parametrize("risk", [0.5, 0.9])
+def test_memory_alone_cannot_hold_a_deployment_restricted(count: int, risk: float) -> None:
+    """A handful of rejected requests must not buy hours of outage.
+
+    This was the larger finding. Ambient pressure is meant to colour an
+    assessment, but its cap sat exactly where ATTACKED outvotes NOMINAL on
+    adversarial pressure alone, so eight remembered signatures held a healthy
+    deployment in ISOLATE for about seven hours after the last one. Eight
+    unique rejected requests is a trivial price. After the attacker stops,
+    restriction must end in about the time hysteresis needs, however many
+    signatures were left behind.
+    """
+    last_restricted, final = restricted_after_probes(count, risk)
+
+    assert last_restricted <= 120, (
+        f"{count} unique rejected requests at risk {risk} left a healthy "
+        f"deployment restricted for {last_restricted}s after the last one"
+    )
+    assert final.regime.value in BENIGN_REGIMES
+    assert final.recommended_action.value == "NONE"
+
+
+def test_remembered_attacks_alone_never_outvote_a_healthy_system() -> None:
+    """The property behind the two tests above, at the layer where it lives.
+
+    However full and however severe, memory's background contribution must lose
+    to NOMINAL when nothing is happening now. Asserted through the real
+    classifier rather than against a constant, because the constant is exactly
+    what was wrong: it was calibrated onto the edge, and a retune that lands on
+    the edge again must fail here.
+    """
+    from ure_engine import AttackMemoryExchange, RegimeClassifier, StateVector
+    from ure_engine.lyapunov import compute_energy
+
+    amx = AttackMemoryExchange()
+    for index in range(256):
+        amx.remember(f"sig-{index}", severity=1.0, now=0.0)
+    ambient = amx.ambient_pressure(now=0.0)
+
+    state = StateVector.create(
+        threat_pressure=0.02, latency_pressure=0.015, failure_pressure=0.01,
+        drift_pressure=0.0, adversarial_pressure=ambient, resource_pressure=0.03,
+        timestamp=0.0,
+    )
+    profile = RegimeClassifier().classify(state, compute_energy(state), 0.0)
+
+    assert profile.dominant is SystemRegime.NOMINAL, (
+        f"memory alone (ambient {ambient:.2f}) classified a healthy system "
+        f"{profile.dominant.value}"
+    )
+    # And with real headroom, so a small retune cannot land back on the edge.
+    assert profile.probability(SystemRegime.NOMINAL) - profile.probability(
+        SystemRegime.ATTACKED
+    ) > 0.15
+
+
+def test_churning_one_off_signatures_does_not_read_as_a_flood() -> None:
+    """The lever the first flood detector created.
+
+    It alarmed on a memory that was "full and mostly new", but churning cheap
+    one-off signatures harms nothing: the partition guarantees they can evict
+    only each other. So the alarm was a lever rather than a defence. A
+    detector should fire on harm, which is corroborated memory being pushed
+    out, not on activity, which anyone can generate for the price of a few
+    rejected requests.
+    """
+    engine = UREEngine(UREConfig(amx_capacity=64))
+    amx = engine.attack_memory
+
+    now = 0.0
+    for index in range(5_000):
+        amx.remember(f"one-off-{index}", severity=1.0, now=now)
+        now += 0.05
+
+    assert len(amx) == 64
+    assert amx.flood_pressure(now=now) == 0.0
+
+
+def test_displacing_corroborated_memory_does_read_as_a_flood() -> None:
+    """The other side of the same boundary: real harm must still be seen."""
+    engine = UREEngine(UREConfig(amx_capacity=64))
+    amx = engine.attack_memory
+
+    now = 0.0
+    for index in range(400):
+        for _ in range(3):
+            amx.remember(f"campaign-{index}", severity=0.9, now=now)
+            now += 0.1
+
+    assert amx.flood_pressure(now=now) > 0.9
+
+    # And the scale-free ramp is honest at the low end: a memory that merely
+    # overflowed by a quarter reads as a mild signal, not a full one.
+    modest = UREEngine(UREConfig(amx_capacity=64)).attack_memory
+    now = 0.0
+    for index in range(80):
+        for _ in range(3):
+            modest.remember(f"campaign-{index}", severity=0.9, now=now)
+            now += 0.1
+    assert 0.0 < modest.flood_pressure(now=now) < 0.6
+
+
+def test_a_peer_feed_import_is_not_counted_as_displacement() -> None:
+    """Imports are operator-driven, not an attacker-minted stream, and must not
+    be able to raise the flood signal by arriving in bulk."""
+    source = UREEngine(UREConfig(amx_capacity=4096)).attack_memory
+    for index in range(200):
+        for _ in range(2):
+            source.remember(f"peer-{index}", severity=0.8, now=float(index))
+
+    target = UREEngine(UREConfig(amx_capacity=64)).attack_memory
+    target.import_profiles(source.export_profiles())
+
+    assert len(target) <= 64
+    assert target.flood_pressure() == 0.0
+
+
+# ---------------------------------------------------------------------------
+# A8. Poll cadence (CALIBRATION), found by red-teaming the fixes
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("cadence", [1.0, 5.0, 30.0, 60.0])
+def test_a_deployments_normal_rate_never_alarms_at_any_poll_cadence(cadence: float) -> None:
+    """The false-positive guarantee must not depend on how often it is polled.
+
+    Dwell's time constants are in SECONDS, taken from the timestamps, although
+    they were written and first tested as observation counts at one second per
+    observation. A deployment polled every 30 or 60 seconds moves them very
+    differently, so the property that matters most is checked across cadences.
+    """
+    engine = UREEngine(UREConfig(**TUNED))
+    for step in range(1_000):
+        assessment = engine.observe(hostile(0.25), now=step * cadence)
+        assert assessment.regime.value in BENIGN_REGIMES, (
+            f"a deployment whose normal rate is 25% alarmed at observation "
+            f"{step} with {cadence:g}s between polls"
+        )
+
+
+def test_detection_speed_is_measured_in_seconds_not_observations() -> None:
+    """Characterises the unit, so the docs cannot drift back to 'observations'.
+
+    The same sustained 30% attack against a quiet baseline is called after
+    roughly the same wall-clock time at any cadence, with a floor of a couple of
+    observations. That is the intended reading (an attack is a duration), and it
+    means a slow poll detects in fewer observations, not more.
+    """
+    def seconds_to_detect(cadence: float) -> float:
+        engine = UREEngine(UREConfig(**TUNED))
+        t = 0.0
+        for _ in range(100):
+            engine.observe(BENIGN, now=t)
+            t += cadence
+        start = t
+        for _ in range(400):
+            a = engine.observe(hostile(0.30), now=t)
+            t += cadence
+            if a.regime.value not in BENIGN_REGIMES:
+                return t - start
+        raise AssertionError("never detected")
+
+    fast, slow = seconds_to_detect(1.0), seconds_to_detect(30.0)
+    assert fast < slow, "a 30s poll detected sooner in wall time than a 1s poll"
+    assert slow <= 120.0, f"a 30s poll took {slow:.0f}s to see a sustained 30% attack"
