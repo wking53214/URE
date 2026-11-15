@@ -149,10 +149,11 @@ _TAU_UP_SUSPICIOUS: float = 6000.0
 #: Dwell above which the baseline is treated as under attack.
 _LOCK_AT: float = 0.25
 
-#: Observations of continuous excess to reach ~63% charge.
+#: Seconds of continuous excess to reach ~63% charge. Seconds, not observations:
+#: the step comes from the timestamps, so this scales with the poll cadence.
 _RISE: float = 25.0
 
-#: Observations of quiet to decay by the same factor. Longer than the rise on
+#: Seconds of quiet to decay by the same factor. Longer than the rise on
 #: purpose: evidence should accumulate faster than it is forgiven, or an
 #: adversary alternating pressure with quiet pays nothing.
 _FALL: float = 60.0
