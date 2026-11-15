@@ -99,6 +99,7 @@ accumulating most slowly.
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 
 from .state_vector import StateVector, clamp
 
@@ -159,6 +160,14 @@ _FALL: float = 60.0
 #: Guard against a pathological or replayed timestamp saturating or flushing
 #: the accumulator in a single observation.
 _MAX_STEP: float = 300.0
+
+#: Version of the exported state, so an import can refuse a shape it does not
+#: understand instead of guessing.
+STATE_VERSION: int = 1
+
+#: Upper bound accepted for an imported observation count. Only the comparison
+#: against the warmup matters, so anything larger is the same answer.
+_MAX_OBSERVATIONS: int = 10**9
 
 
 class HostileDwell:
@@ -253,6 +262,60 @@ class HostileDwell:
         tau = _RISE if target > self._value else _FALL
         self._value = clamp(self._value + (target - self._value) * (1.0 - math.exp(-dt / tau)))
         return self._value
+
+    def export_state(self) -> dict[str, object]:
+        """The learned state, for carrying across a restart.
+
+        A restart otherwise costs the warmup, with detection off, and worse: an
+        engine that comes up during an attack learns the attack as normal. An
+        adversary who can crash the engine then gets a free calibration window.
+        Carrying the baseline across closes that, at the price of one more
+        piece of state worth protecting (see :meth:`import_state`).
+        """
+        return {
+            "version": STATE_VERSION,
+            "baseline": self._baseline,
+            "value": self._value,
+            "observations": self._observations,
+            "last_timestamp": self._last_timestamp,
+        }
+
+    def import_state(self, state: object) -> bool:
+        """Restore state from :meth:`export_state`. True if accepted.
+
+        The imported baseline is the one input that can blind the engine, so it
+        is treated as untrusted. It is clamped to this instance's own ceiling,
+        which means a tampered or stale record can do no more than the engine
+        could already be argued into by a cold start during an attack: hide
+        traffic below ``ceiling + margin``, never above it. A record that is
+        malformed in any way is refused whole, and nothing is changed.
+
+        Downtime needs no handling of its own. The first update after an import
+        takes its time step from the restored timestamp, clamped to
+        ``_MAX_STEP``, so the accumulator decays across the outage by the same
+        rule that decays it during one.
+        """
+        if not isinstance(state, Mapping) or state.get("version") != STATE_VERSION:
+            return False
+        baseline = state.get("baseline")
+        value = state.get("value")
+        observations = state.get("observations")
+        last = state.get("last_timestamp")
+        if any(isinstance(x, bool) for x in (baseline, value, observations, last)):
+            return False
+        if not isinstance(baseline, (int, float)) or not math.isfinite(baseline):
+            return False
+        if not isinstance(value, (int, float)) or not math.isfinite(value):
+            return False
+        if not isinstance(observations, int) or observations < 0:
+            return False
+        if last is not None and (not isinstance(last, (int, float)) or not math.isfinite(last)):
+            return False
+        self._baseline = min(self._ceiling, clamp(float(baseline)))
+        self._value = clamp(float(value))
+        self._observations = min(observations, _MAX_OBSERVATIONS)
+        self._last_timestamp = None if last is None else float(last)
+        return True
 
     def reset(self) -> None:
         """Forget the baseline and the accumulator.

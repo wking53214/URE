@@ -121,6 +121,10 @@ class UREAssessment:
     #: derivative and volatility have all gone flat, so an integrator watching
     #: for "this is getting worse" at saturation should watch this.
     hostile_dwell: float = 0.0
+    #: Hostile pressure this deployment currently treats as its own normal. What
+    #: ``hostile_dwell`` is measured against, so an operator looking at an
+    #: ATTACKED call can see what it was judged relative to. 0.0 until warmup.
+    hostile_baseline: float = 0.0
     #: Engine schema version, so replayed records identify their producer.
     schema_version: str = "2.0"
 
@@ -165,6 +169,7 @@ class UREAssessment:
             "regime_confidence": round(self.regime_confidence, 4),
             "regime_entropy": round(self.regime_entropy, 4),
             "hostile_dwell": round(self.hostile_dwell, 4),
+            "hostile_baseline": round(self.hostile_baseline, 4),
             "lyapunov": {
                 "energy": round(self.lyapunov_energy, 4),
                 "derivative": round(self.lyapunov_derivative, 6),
