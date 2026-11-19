@@ -288,7 +288,10 @@ verbatim.
 
 ### UNKNOWN is a fault
 
-Returned only for non-finite input. It ranks **above STRESSED** in severity and
+Returned only when the computed energy, derivative or volatility is non-finite.
+It is not returned for bad input telemetry: a missing or NaN telemetry value is
+replaced by a floor value before the classifier sees it and reads as `NOMINAL`
+(README, "What was fixed", item 4; EXECUTED 2026-11-19). It ranks **above STRESSED** in severity and
 triggers `DEGRADE` plus an operator page. An engine that cannot classify its
 own state is not in a mild condition, and it must never fail toward "everything
 is fine".
