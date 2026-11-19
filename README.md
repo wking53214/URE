@@ -15,8 +15,24 @@ It computes **stability, trajectory, regime, resilience, recovery and
 adaptation**: not a risk score.
 
 ```
-278 tests · 0 runtime dependencies · Python 3.11+
+0 runtime dependencies · Python 3.11+ · 357 passed, 3 skipped (EXECUTED 2026-11-15)
 ```
+
+---
+
+## Role Within ≡TACK
+
+- **What it is.** A stdlib-only resilience engine. It turns gateway telemetry into six pressures, then a regime, a resilience index and a recommended action.
+- **What it owns.** Regime classification, trajectory and energy, attack memory (AMX), behavioral vaccines (BVE), and the recommendation. It evaluates and recommends only.
+- **What it does not own.** Enforcement, policy definition, authentication, evidence custody. A recommendation is not an authorization, and the gateway decides.
+- **Contributes.** Evaluation. An optional CNS gate (`ure_engine/cns_connector.py`) restates the recommendation as a CNS verdict.
+- **Depends on.** Nothing at runtime. CNS is optional (`pip install -e '.[cns]'` from a checkout; the package is not on PyPI, so `pip install 'ure-engine[cns]'` fails, EXECUTED 2026-11-16).
+- **Depended on by.** UNKNOWN. A legacy GSA import is supported (see below). `docs/INTEGRATION_SENTINEL.md` is a proposal, not an implemented integration.
+- **Verified versus declared.** Verified by tests: the regime model, the guards listed under "What was fixed", and the CNS gate. Declared only: the wider AEGIS block diagram. FORTRESS, WS3 and the dashboard are not in this repo, and GSA is a separate repo. LTE, AMX and BVE are modules here (`ure_engine/lyapunov.py`, `attack_memory.py`, `vaccines.py`; INSPECTED 2026-11-16).
+- **Basis.** The energy function borrows the Lyapunov framing from control theory (`ure_engine/lyapunov.py`). It is a weighted heuristic. Nothing in this repo proves stability. The regime weights are not derived from production data, because there is none (`docs/PROVENANCE.md`, section 10), and the tests run synthetic telemetry. `docs/INTEGRATION_SENTINEL.md` says its tuning table came from a simulated load generator that is not in this repo and cannot be reproduced from it (INSPECTED 2026-11-16).
+- **Fail behavior.** Mixed. Non-finite energy is `UNKNOWN`, but missing or NaN input telemetry reads as `NOMINAL` (see fix 4). `hard_block` from a policy bypasses the adaptive threshold.
+
+Status: reference implementation, v2.0. Last checked 2026-11-15 at commit `a6bfda0`. License: Apache-2.0. Maintainer: William N. King.
 
 ---
 
@@ -206,8 +222,15 @@ Two further defects were found by the tests written for this build:
 
 **4. NaN energy reported `NOMINAL`.** `clamp()` maps NaN to its floor: right
 for a pressure, catastrophic for energy, because a broken computation
-normalized to 0.0 and the engine confidently reported health. Non-finite
-inputs now return `UNKNOWN`.
+normalized to 0.0 and the engine confidently reported health. The classifier
+returns `UNKNOWN` when energy, derivative or volatility is non-finite.
+**Limit (EXECUTED 2026-11-15):** this guard is downstream of input handling.
+A NaN in `risk_score`, `blocked_rate`, `latency_ms`, `queue_saturation` or
+`retry_rate` is turned into a floor value before the classifier sees it, so
+`UREEngine.observe` returned `NOMINAL` / `NONE` for each. An empty telemetry
+dict is also `NOMINAL`. Infinity is clamped to the ceiling (`ATTACKED` /
+`ISOLATE`). So missing or corrupt telemetry reads as healthy. This is a fail-open
+condition; do not rely on `UNKNOWN` for bad inputs.
 
 **5. Hysteresis could never release.** The planner recorded *held* actions as
 history, so every hold re-asserted itself as evidence for continuing to hold.
@@ -277,7 +300,7 @@ threshold entirely. No system state makes a raw SSN acceptable.
 ```bash
 pip install -e ".[dev]"
 
-pytest                              # 278 tests
+pytest                              # 357 passed, 3 skipped on 2026-11-15
 python examples/incident_walkthrough.py
 ```
 
@@ -289,7 +312,7 @@ component whose entire job is to keep working when other things break.
 
 ## Optional CNS connection
 
-URE does not need CNS. It has no runtime dependency, nothing in the package imports CNS when it loads, and the engine never imports it (`tests/test_cns_independence.py` checks this with CNS blocked). `ure_engine/cns_connector.py` is the one place that knows CNS exists. Install it with `pip install 'ure-engine[cns]'`; without CNS, building the gate raises `CnsNotInstalled` and nothing else changes.
+URE does not need CNS. It has no runtime dependency, nothing in the package imports CNS when it loads, and the engine never imports it (`tests/test_cns_independence.py` checks this with CNS blocked). `ure_engine/cns_connector.py` is the one place that knows CNS exists. Install it with `pip install -e '.[cns]'` from a checkout; without CNS, building the gate raises `CnsNotInstalled` and nothing else changes.
 
 It restates URE's recommendation in CNS's shared gate vocabulary (`cns.gate`). URE recommends and the gateway decides, and that stays true: a consumer that speaks CNS can resolve the recommendation alongside gates from other repositories, and whether to honour it is still the consumer's call.
 
