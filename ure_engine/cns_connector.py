@@ -65,7 +65,7 @@ that wants it as a precondition (is the system fit to take this work on?)
 passes ``position="alpha"``. URE's own assessment is the same either way; only
 the end it is seated at differs.
 
-Install with the extra: ``pip install 'ure-engine[cns]'``.
+Install with the extra: ``pip install 'ure-engine[cns] @ git+https://github.com/wking53214/URE.git@main'``.
 """
 
 from __future__ import annotations
@@ -90,7 +90,7 @@ __all__ = [
     "to_cns_result",
 ]
 
-INSTALL_HINT = "pip install 'ure-engine[cns]'"
+INSTALL_HINT = "pip install 'ure-engine[cns] @ git+https://github.com/wking53214/URE.git@main'"
 SUBJECT = "assessment"
 
 #: How old an assessment may be, in seconds, before the gate calls it stale.
