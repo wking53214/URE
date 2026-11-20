@@ -223,7 +223,7 @@ Ship the kill switch in the same change, not after it.
 **Route it through the CNS gate, and do not act on the gate alone.** URE ships
 `UREGate` (`ure_engine/cns_connector.py`), which restates an assessment as a
 `cns.gate.GateResult`. sentinel_os already requires `cns.gate` (its README pins
-v4.0.0, the same tag URE pins), so the vocabulary is shared. The mapping:
+v4.1.0, the same tag URE pins), so the vocabulary is shared. The mapping:
 
 | URE decision | CNS outcome | Stage 3 |
 |---|---|---|
