@@ -15,7 +15,7 @@ It computes **stability, trajectory, regime, resilience, recovery and
 adaptation**: not a risk score.
 
 ```
-0 runtime dependencies · Python 3.11+ · 357 passed, 3 skipped (EXECUTED 2026-11-15)
+0 runtime dependencies · Python 3.11+ · 367 passed, 3 skipped without CNS; 427 passed with it (EXECUTED 2026-11-19)
 ```
 
 ---
@@ -30,7 +30,7 @@ adaptation**: not a risk score.
 - **Depended on by.** UNKNOWN. A legacy GSA import is supported (see below). `docs/INTEGRATION_SENTINEL.md` is a proposal, not an implemented integration.
 - **Verified versus declared.** Verified by tests: the regime model, the guards listed under "What was fixed", and the CNS gate. Declared only: the wider AEGIS block diagram. FORTRESS, WS3 and the dashboard are not in this repo, and GSA is a separate repo. LTE, AMX and BVE are modules here (`ure_engine/lyapunov.py`, `attack_memory.py`, `vaccines.py`; INSPECTED 2026-11-16).
 - **Basis.** The energy function borrows the Lyapunov framing from control theory (`ure_engine/lyapunov.py`). It is a weighted heuristic. Nothing in this repo proves stability. The regime weights are not derived from production data, because there is none (`docs/PROVENANCE.md`, section 10), and the tests run synthetic telemetry. `docs/INTEGRATION_SENTINEL.md` says its tuning table came from a simulated load generator that is not in this repo and cannot be reproduced from it (INSPECTED 2026-11-16).
-- **Fail behavior.** Mixed. Non-finite energy is `UNKNOWN`, but missing or NaN input telemetry reads as `NOMINAL` (see fix 4). `hard_block` from a policy bypasses the adaptive threshold.
+- **Fail behavior.** Non-finite energy is `UNKNOWN`, and so is an unreadable feed (missing or non-numeric telemetry), reported as a fault with `input_fault` set (see fix 4). A partial feed is still read, and infinity is clamped to the ceiling. `hard_block` from a policy bypasses the adaptive threshold.
 
 Status: reference implementation, v2.0. Last checked 2026-11-15 at commit `a6bfda0`. License: Apache-2.0. Maintainer: William N. King.
 
@@ -224,13 +224,14 @@ Two further defects were found by the tests written for this build:
 for a pressure, catastrophic for energy, because a broken computation
 normalized to 0.0 and the engine confidently reported health. The classifier
 returns `UNKNOWN` when energy, derivative or volatility is non-finite.
-**Limit (EXECUTED 2026-11-15):** this guard is downstream of input handling.
-A NaN in `risk_score`, `blocked_rate`, `latency_ms`, `queue_saturation` or
-`retry_rate` is turned into a floor value before the classifier sees it, so
-`UREEngine.observe` returned `NOMINAL` / `NONE` for each. An empty telemetry
-dict is also `NOMINAL`. Infinity is clamped to the ceiling (`ATTACKED` /
-`ISOLATE`). So missing or corrupt telemetry reads as healthy. This is a fail-open
-condition; do not rely on `UNKNOWN` for bad inputs.
+**Input handling.** The classifier guard alone was downstream of input handling, so before 2026-11-19 a NaN in
+`risk_score`, `blocked_rate`, `latency_ms`, `queue_saturation` or `retry_rate`, or an empty feed, was turned into a
+floor value and read as `NOMINAL` / `NONE` (EXECUTED 2026-11-15). Now `UREEngine.observe` returns a **fault result**
+for a feed with no telemetry signal at all, or with a signal that is present but not a usable number (`None`, text,
+a boolean, NaN). The result has regime `UNKNOWN`, decision and action `DEGRADE`, `healthy` false and a non-empty
+`input_fault` naming each problem; it does not move the trajectory, dwell, memory or the observation count, and
+`UREEngine.faults` counts it. The CNS gate answers it `RETRY`, not `PASS`. A partial feed (some signals present, the
+rest absent) is still read as before, and infinity is still clamped to the ceiling.
 
 **5. Hysteresis could never release.** The planner recorded *held* actions as
 history, so every hold re-asserted itself as evidence for continuing to hold.
@@ -300,7 +301,7 @@ threshold entirely. No system state makes a raw SSN acceptable.
 ```bash
 pip install -e ".[dev]"
 
-pytest                              # 357 passed, 3 skipped on 2026-11-15
+pytest                              # 367 passed, 3 skipped on 2026-11-19 (427 passed with the cns extra)
 python examples/incident_walkthrough.py
 ```
 

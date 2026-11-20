@@ -87,6 +87,20 @@ class TelemetryFrame:
     policy: PolicyTelemetry | None = None
     #: Anything the adapter does not recognize, preserved for audit.
     extra: Mapping[str, Any] = field(default_factory=dict)
+    #: Problems found while building this frame from a loose mapping: a signal
+    #: that was present but not a usable number, or a feed with no signal at all.
+    #: Empty for a clean frame. The engine answers a frame with problems by
+    #: reporting a fault, not by reading the junk as zero pressure.
+    faults: tuple[str, ...] = ()
+
+    def problems(self) -> tuple[str, ...]:
+        """Everything wrong with this frame: build-time faults plus NaN fields."""
+        found = list(self.faults)
+        for name in _NUMERIC_FIELDS:
+            value = getattr(self, name)
+            if isinstance(value, float) and value != value:
+                found.append(f"{name} is not a number (NaN)")
+        return tuple(found)
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any]) -> TelemetryFrame:
@@ -108,7 +122,16 @@ class TelemetryFrame:
             "drift_metric",
             "error_rate",
         }
+        faults: list[str] = []
+        for name in _NUMERIC_FIELDS:
+            if name in data and _unusable(data[name]):
+                faults.append(f"{name} is present but not a usable number ({data[name]!r})")
+        if not faults and not any(
+            name in data for name in (*_NUMERIC_FIELDS, "circuit_state", "policy")
+        ):
+            faults.append("the feed carries no telemetry signal at all")
         return cls(
+            faults=tuple(faults),
             risk_score=_as_float(data.get("risk_score")),
             blocked_rate=_as_float(data.get("blocked_rate")),
             retry_rate=_as_float(data.get("retry_rate")),
@@ -129,6 +152,31 @@ class TelemetryFrame:
                 if k not in known and k not in {"signatures", "markers", "policy"}
             },
         )
+
+
+_NUMERIC_FIELDS = (
+    "risk_score",
+    "blocked_rate",
+    "retry_rate",
+    "latency_ms",
+    "latency_volatility",
+    "queue_saturation",
+    "substrate_health",
+    "adversarial_events",
+    "drift_metric",
+    "error_rate",
+)
+
+
+def _unusable(value: Any) -> bool:
+    """True when a present signal cannot be read as a number (None, text, bool, NaN)."""
+    if value is None or isinstance(value, bool):
+        return True
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return True
+    return result != result
 
 
 def _as_float(value: Any, default: float = 0.0) -> float:

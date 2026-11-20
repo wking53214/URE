@@ -167,6 +167,7 @@ class UREEngine:
         "_classifier",
         "_config",
         "_dwell",
+        "_faults",
         "_last",
         "_lock",
         "_lyapunov",
@@ -215,6 +216,7 @@ class UREEngine:
         self._thresholds = AdaptiveThresholdController()
 
         self._observations = 0
+        self._faults = 0
         self._last: UREAssessment | None = None
         self._lock = threading.RLock()
 
@@ -266,6 +268,11 @@ class UREEngine:
     def observations(self) -> int:
         return self._observations
 
+    @property
+    def faults(self) -> int:
+        """How many feeds were refused as unreadable (see ``UREAssessment.fault``)."""
+        return self._faults
+
     # -- the pipeline -----------------------------------------------------
 
     def observe(
@@ -282,6 +289,17 @@ class UREEngine:
             if isinstance(telemetry, TelemetryFrame)
             else TelemetryFrame.from_mapping(telemetry)
         )
+
+        problems = frame.problems()
+        if problems:
+            # A feed that is empty, or carries a signal that is not a number,
+            # says nothing about the system. Report a fault and leave every
+            # learned and tracked value untouched, so a broken feed can neither
+            # read as health nor move the trajectory, dwell or memory.
+            with self._lock:
+                self._faults += 1
+                self._last = UREAssessment.fault(problems, timestamp)
+                return self._last
 
         with self._lock:
             self._observations += 1
@@ -620,6 +638,7 @@ class UREEngine:
         with self._lock:
             return {
                 "observations": self._observations,
+                "faults": self._faults,
                 "energy": round(self._lyapunov.energy, 4),
                 "derivative": round(self._lyapunov.derivative, 6),
                 "headroom": round(self._lyapunov.headroom(), 4),
@@ -651,6 +670,7 @@ class UREEngine:
             if isinstance(self._telemetry, SmoothingAdapter):
                 self._telemetry.reset()
             self._observations = 0
+            self._faults = 0
             self._last = None
             if not keep_memory:
                 self._amx.clear()

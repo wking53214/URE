@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any
 
@@ -125,6 +125,11 @@ class UREAssessment:
     #: ``hostile_dwell`` is measured against, so an operator looking at an
     #: ATTACKED call can see what it was judged relative to. 0.0 until warmup.
     hostile_baseline: float = 0.0
+    #: Why this is a fault result, when the input could not be read: each entry
+    #: names a signal that was missing or not a number. Empty for a real
+    #: assessment. A non-empty value means nothing below was computed from the
+    #: feed, so an operator must not read the regime as a verdict on the system.
+    input_fault: tuple[str, ...] = ()
     #: Engine schema version, so replayed records identify their producer.
     schema_version: str = "2.0"
 
@@ -133,6 +138,8 @@ class UREAssessment:
     @property
     def healthy(self) -> bool:
         """True when nothing needs doing."""
+        if self.input_fault:
+            return False
         return (
             self.regime in (SystemRegime.NOMINAL, SystemRegime.RECOVERING)
             and self.recommended_action in (RecoveryAction.NONE, RecoveryAction.RESTORE)
@@ -194,6 +201,8 @@ class UREAssessment:
             "explanation": self.explanation,
             "state": self.state.to_dict(),
         }
+        if self.input_fault:
+            payload["input_fault"] = list(self.input_fault)
         if self.regime_profile is not None:
             payload["regime_profile"] = self.regime_profile.to_dict()
         if self.resilience_breakdown is not None:
@@ -207,6 +216,19 @@ class UREAssessment:
         kwargs.setdefault("sort_keys", True)
         kwargs.setdefault("separators", (",", ":"))
         return json.dumps(self.to_dict(), **kwargs)
+
+    @classmethod
+    def fault(cls, problems: tuple[str, ...], timestamp: float | None = None) -> UREAssessment:
+        """The result for a feed URE could not read: missing or non-numeric data.
+
+        Distinct from a classified assessment: ``input_fault`` names the problems
+        and ``healthy`` is False. Reports UNKNOWN with zero resilience and a DEGRADE
+        decision, because a broken feed must never read as a quiet system. The
+        decision is DEGRADE, not REVIEW as :meth:`unknown` uses, so it meets the
+        floor the CNS gate holds the UNKNOWN regime to (a REVIEW there is a breach).
+        """
+        base = cls.unknown("; ".join(problems), timestamp)
+        return replace(base, input_fault=tuple(problems), decision=GovernanceDecision.DEGRADE)
 
     @classmethod
     def unknown(cls, reason: str, timestamp: float | None = None) -> UREAssessment:

@@ -382,3 +382,51 @@ class TestLifecycle:
         assert GovernanceDecision.ALLOW.restriction < GovernanceDecision.REVIEW.restriction
         assert GovernanceDecision.THROTTLE.restriction < GovernanceDecision.ISOLATE.restriction
         assert GovernanceDecision.QUARANTINE.restriction < GovernanceDecision.DENY.restriction
+
+
+class TestUnreadableFeedIsAFault:
+    """Missing or non-numeric telemetry is a fault result, never a quiet system."""
+
+    @pytest.mark.parametrize(
+        "feed",
+        [
+            {},
+            {"latency_mm": 900},  # misspelled: no signal at all
+            {"risk_score": None},
+            {"risk_score": "high"},
+            {"queue_saturation": float("nan")},
+            {"retry_rate": True},
+        ],
+    )
+    def test_bad_feed_reports_a_fault_not_nominal(self, feed) -> None:
+        engine = UREEngine()
+        result = engine.observe(feed, now=1.0)
+        assert result.input_fault
+        assert result.regime is SystemRegime.UNKNOWN
+        assert result.decision is GovernanceDecision.DEGRADE
+        assert not result.healthy
+        assert "input_fault" in result.to_dict()
+        assert engine.faults == 1 and engine.observations == 0
+
+    def test_a_fault_does_not_move_what_the_engine_tracks(self) -> None:
+        engine = UREEngine()
+        for i in range(5):
+            engine.observe({"latency_ms": 50, "risk_score": 0.1}, now=float(i))
+        before = engine.snapshot()
+        engine.observe({"risk_score": None}, now=6.0)
+        after = engine.snapshot()
+        assert after["observations"] == before["observations"]
+        assert after["energy"] == before["energy"]
+        assert after["faults"] == before["faults"] + 1
+
+    def test_a_partial_feed_is_still_read(self) -> None:
+        result = UREEngine().observe({"latency_ms": 120}, now=1.0)
+        assert not result.input_fault
+
+    def test_a_real_assessment_has_no_fault_field_in_its_record(self) -> None:
+        result = UREEngine().observe({"latency_ms": 120}, now=1.0)
+        assert "input_fault" not in result.to_dict()
+
+    def test_a_nan_frame_built_by_hand_is_a_fault(self) -> None:
+        result = UREEngine().observe(TelemetryFrame(risk_score=float("nan")), now=1.0)
+        assert result.input_fault

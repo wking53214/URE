@@ -106,3 +106,10 @@ def test_real_engine_assessments_are_never_called_inconsistent():
         a = engine.observe({"latency_ms": latency, "error_rate": error}, now=start + i)
         result = UREGate().check(a)
         assert "disagree" not in result.reason, a.to_dict()
+
+
+@pytest.mark.parametrize("feed", [{}, {"risk_score": None}, {"queue_saturation": float("nan")}])
+def test_a_broken_feed_never_passes_the_gate(feed):
+    """The audit found the gate returning PASS for a NaN observation (bad input read as NOMINAL)."""
+    result = UREGate().check(UREEngine().observe(feed))
+    assert result.outcome is RETRY
