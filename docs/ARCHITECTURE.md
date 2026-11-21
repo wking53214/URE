@@ -288,10 +288,13 @@ verbatim.
 
 ### UNKNOWN is a fault
 
-Returned only when the computed energy, derivative or volatility is non-finite.
-It is not returned for bad input telemetry: a missing or NaN telemetry value is
-replaced by a floor value before the classifier sees it and reads as `NOMINAL`
-(README, "What was fixed", item 4; EXECUTED 2026-11-19). It ranks **above STRESSED** in severity and
+Returned when the computed energy, derivative or volatility is non-finite, and
+also when the feed has no telemetry signal at all or carries a signal that is
+present but not a usable number (`None`, text, a boolean, NaN). That second case
+is reported as a fault result with `input_fault` set; before 2026-11-19 such
+input was turned into a floor value and read as `NOMINAL` (README, "What was
+fixed", item 4). A partial feed is still read, and infinity is still clamped to
+the ceiling. It ranks **above STRESSED** in severity and
 triggers `DEGRADE` plus an operator page. An engine that cannot classify its
 own state is not in a mild condition, and it must never fail toward "everything
 is fine".
@@ -521,10 +524,12 @@ and BVE are independently locked.
 without spawning tasks, there is no I/O to await. It exists so callers on an
 event loop are not forced into a thread.
 
-**Failure behaviour.** Partial telemetry degrades to a partial picture. `None`,
-strings and NaN coerce to safe defaults. A system that is on fire does not owe
-the resilience engine a complete feed. Non-finite *energy*, however, returns
-UNKNOWN rather than a default, see §6.
+**Failure behaviour.** Partial telemetry degrades to a partial picture: a signal
+that is absent is read as the floor. A system that is on fire does not owe the
+resilience engine a complete feed. A feed with no signal at all, or a signal that
+is present but not a usable number (`None`, text, a boolean, NaN), is not coerced:
+it returns an `UNKNOWN` fault result with `input_fault` set, and so does non-finite
+*energy*. See §6.
 
 **Cost.** Bounded windows (64 samples), no I/O, no allocation proportional to
 traffic. AMX is capacity-bounded with weakest-first eviction; BVE likewise by
