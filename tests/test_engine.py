@@ -360,6 +360,7 @@ class TestSerializationAndIntrospection:
         assert assessment.regime is SystemRegime.UNKNOWN
         assert assessment.resilience_index == 0.0
         assert assessment.recommended_action is RecoveryAction.DEGRADE
+        assert assessment.decision is GovernanceDecision.DEGRADE
         assert not assessment.healthy
 
 

@@ -15,7 +15,7 @@ It computes **stability, trajectory, regime, resilience, recovery and
 adaptation**: not a risk score.
 
 ```
-0 runtime dependencies · Python 3.11+ · 367 passed, 3 skipped without CNS; 427 passed with it (EXECUTED 2026-11-19)
+0 runtime dependencies · Python 3.11+ · 367 passed, 3 skipped without CNS (EXECUTED 2026-11-19, not rerun since); 428 passed with CNS 4.0.0 (EXECUTED 2026-11-21)
 ```
 
 ---
@@ -301,7 +301,7 @@ threshold entirely. No system state makes a raw SSN acceptable.
 ```bash
 pip install -e ".[dev]"
 
-pytest                              # 367 passed, 3 skipped on 2026-11-19 (427 passed with the cns extra)
+pytest                              # 367 passed, 3 skipped on 2026-11-19 without CNS; 428 passed on 2026-11-21 with the cns extra
 python examples/incident_walkthrough.py
 ```
 

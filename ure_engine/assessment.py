@@ -223,12 +223,10 @@ class UREAssessment:
 
         Distinct from a classified assessment: ``input_fault`` names the problems
         and ``healthy`` is False. Reports UNKNOWN with zero resilience and a DEGRADE
-        decision, because a broken feed must never read as a quiet system. The
-        decision is DEGRADE, not REVIEW as :meth:`unknown` uses, so it meets the
-        floor the CNS gate holds the UNKNOWN regime to (a REVIEW there is a breach).
+        decision, because a broken feed must never read as a quiet system.
         """
         base = cls.unknown("; ".join(problems), timestamp)
-        return replace(base, input_fault=tuple(problems), decision=GovernanceDecision.DEGRADE)
+        return replace(base, input_fault=tuple(problems))
 
     @classmethod
     def unknown(cls, reason: str, timestamp: float | None = None) -> UREAssessment:
@@ -237,6 +235,8 @@ class UREAssessment:
         Reports UNKNOWN with zero resilience rather than a comfortable default.
         An engine that fails toward "everything is fine" is worse than no
         engine, because it manufactures confidence the operator will act on.
+        The decision is DEGRADE, the floor the CNS gate holds the UNKNOWN regime
+        to; a weaker decision there would be read as a breach.
         """
         return cls(
             resilience_index=0.0,
@@ -251,6 +251,6 @@ class UREAssessment:
             recommended_action=RecoveryAction.DEGRADE,
             explanation=f"URE could not assess system state: {reason}",
             timestamp=time.time() if timestamp is None else timestamp,
-            decision=GovernanceDecision.REVIEW,
+            decision=GovernanceDecision.DEGRADE,
             recommended_threshold=0.60,
         )

@@ -113,3 +113,9 @@ def test_a_broken_feed_never_passes_the_gate(feed):
     """The audit found the gate returning PASS for a NaN observation (bad input read as NOMINAL)."""
     result = UREGate().check(UREEngine().observe(feed))
     assert result.outcome is RETRY
+
+
+def test_the_unknown_assessment_is_retried_not_treated_as_a_breach():
+    """UREAssessment.unknown() must meet the floor the gate holds the UNKNOWN regime to."""
+    result = UREGate().check(UREAssessment.unknown("telemetry feed lost"))
+    assert result.outcome is RETRY
